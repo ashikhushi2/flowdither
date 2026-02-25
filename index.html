@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
+  <div id="tab-bar"></div>
   <div id="canvas-wrap">
     <canvas id="dither-canvas"></canvas>
     <canvas id="overlay-canvas"></canvas>
@@ -20,70 +21,95 @@
 
     <div id="panel-scroll">
 
-      <!-- ── Section: Shape ──────────────────────────────────── -->
+      <!-- ── Section 2: Canvas ──────────────────────────────────── -->
       <div class="panel-section">
         <div class="section-header">
-          <span class="section-title">Shape</span>
+          <span class="section-title">Canvas</span>
         </div>
         <div class="section-body">
-          <div id="drop-zone">
-            <button id="upload-btn">Upload SVG</button>
-            <p class="drop-hint">or drag &amp; drop .svg file</p>
-          </div>
-          <input type="file" id="file-input" accept=".svg">
-
-          <div id="dir-row">
-            <button class="dir-btn active" data-dir="1">CCW</button>
-            <button class="dir-btn" data-dir="-1">CW</button>
+          <div class="gr">
+            <span>Size</span>
+            <select id="canvas-size-sel">
+              <option value="600x600" selected>600 &times; 600</option>
+              <option value="800x800">800 &times; 800</option>
+              <option value="1024x1024">1024 &times; 1024</option>
+              <option value="800x600">800 &times; 600 (4:3)</option>
+              <option value="1920x1080">1920 &times; 1080 (16:9)</option>
+            </select>
           </div>
           <div class="gr">
-            <span>Fill</span>
-            <input id="fill-sl" type="range" min="5" max="100" value="70">
-            <span class="sv" id="fill-val">70%</span>
-          </div>
-          <div class="gr">
-            <span>Speed</span>
-            <input id="speed-sl" type="range" min="5" max="400" value="100">
-            <span class="sv" id="speed-val">1.0x</span>
-          </div>
-          <div class="gr">
-            <span>Grain</span>
-            <input id="grain-sl" type="range" min="3" max="28" value="9" step="0.5">
-            <span class="sv" id="grain-val">9</span>
-          </div>
-          <div class="gr">
-            <span>Trail</span>
-            <input id="stretch-sl" type="range" min="10" max="85" value="45" step="1">
-            <span class="sv" id="stretch-val">45%</span>
+            <span>BG</span>
+            <input type="color" id="bg-color-picker" value="#000000">
+            <input type="text" class="hex-input" id="bg-color-hex" value="#000000" maxlength="7" spellcheck="false">
           </div>
         </div>
       </div>
+      <div class="panel-divider"></div>
 
-      <!-- ── Section: Nodes ──────────────────────────────────── -->
+      <!-- ── Section 3: Shapes ──────────────────────────────────── -->
       <div class="panel-section">
+        <div class="section-header">
+          <span class="section-title">Shapes</span>
+          <button id="add-shape-btn" class="section-add-btn">+ Add</button>
+        </div>
+        <div class="section-body">
+          <div id="shapes-list"></div>
+          <div class="shape-selected-controls" style="display:none">
+            <div class="gr">
+              <span>X</span>
+              <input id="pos-x-sl" type="range" min="-300" max="300" value="0" step="1">
+              <span class="sv" id="pos-x-val">0</span>
+            </div>
+            <div class="gr">
+              <span>Y</span>
+              <input id="pos-y-sl" type="range" min="-300" max="300" value="0" step="1">
+              <span class="sv" id="pos-y-val">0</span>
+            </div>
+            <div class="gr">
+              <span>Scale</span>
+              <input id="scale-sl" type="range" min="10" max="300" value="100" step="1">
+              <span class="sv" id="scale-val">100%</span>
+            </div>
+            <div class="gr">
+              <span>Rotate</span>
+              <input id="rotate-sl" type="range" min="-180" max="180" value="0" step="1">
+              <span class="sv" id="rotate-val">0&deg;</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel-divider shape-section"></div>
+
+      <!-- ── Section 4: Nodes ──────────────────────────────────── -->
+      <div class="panel-section shape-section">
         <div class="section-header">
           <span class="section-title">Nodes</span>
           <button id="add-btn" class="section-add-btn">+ Add</button>
         </div>
         <div class="section-body" id="nodes-list"></div>
       </div>
+      <div class="panel-divider shape-section"></div>
 
-      <!-- ── Section: Anchors ────────────────────────────────── -->
-      <div class="panel-section">
+      <!-- ── Section 5: Anchors ────────────────────────────────── -->
+      <div class="panel-section shape-section">
         <div class="section-header">
           <span class="section-title">Anchors</span>
           <button id="add-anchor-btn" class="section-add-btn">+ Add</button>
         </div>
         <div class="section-body" id="anchors-list"></div>
       </div>
+      <div class="panel-divider"></div>
 
-      <!-- ── Section: Export ─────────────────────────────────── -->
+      <!-- ── Section 6: Export ─────────────────────────────────── -->
       <div class="panel-section">
-        <div class="section-header">
-          <span class="section-title">Export</span>
-        </div>
         <div class="section-body">
-          <button id="export-btn">Export Image</button>
+          <div class="export-btn-wrap">
+            <div id="export-dropdown" class="export-dropdown" style="display:none">
+              <div class="export-dropdown-item" data-mode="canvas">Export Canvas</div>
+              <div class="export-dropdown-item" data-mode="shape">Export Shape</div>
+            </div>
+            <button id="export-btn">EXPORT</button>
+          </div>
         </div>
       </div>
 
@@ -96,6 +122,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Drop zone overlay (canvas area) -->
+  <input type="file" id="file-input" accept=".svg">
 
   <!-- Export Modal -->
   <div id="export-modal" class="modal hidden">
@@ -116,9 +145,9 @@
         <div class="export-group">
           <label>Resolution</label>
           <select id="export-resolution">
-            <option value="1">1x (600x600)</option>
-            <option value="2" selected>2x (1200x1200)</option>
-            <option value="4">4x (2400x2400)</option>
+            <option value="1">1x</option>
+            <option value="2" selected>2x</option>
+            <option value="4">4x</option>
           </select>
         </div>
         <div class="export-group">

@@ -1,10 +1,26 @@
 import { SCALE, CX, CY, W, H, getCanvasRefs } from '../utils/canvas.js';
 import { nodeColor, hexAlpha } from '../utils/color.js';
 import { getState, nPos, hPos, getAnchorById } from './NodeManager.js';
+import { getAllAssets, getSelectedAssetId } from '../core/ShapeManager.js';
 
 const S = SCALE;
 
-export function renderOverlay() {
+function drawShapeOutline(octx, shape, strokeStyle, lineWidth) {
+  if (!shape) return;
+  octx.beginPath();
+  const pts = shape.points;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    if (i === 0) octx.moveTo(p.x * S, p.y * S);
+    else octx.lineTo(p.x * S, p.y * S);
+  }
+  octx.closePath();
+  octx.strokeStyle = strokeStyle;
+  octx.lineWidth = lineWidth;
+  octx.stroke();
+}
+
+export function renderOverlay(shapeTransform) {
   const { octx } = getCanvasRefs();
   const state = getState();
   const { nodes, activeId, flowMode, flowDir, shapeRadius, currentShape } = state;
@@ -12,25 +28,56 @@ export function renderOverlay() {
 
   octx.clearRect(0, 0, W, H);
 
-  // Shape outline
-  if (currentShape) {
-    octx.beginPath();
-    const pts = currentShape.points;
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      if (i === 0) octx.moveTo(p.x * S, p.y * S);
-      else octx.lineTo(p.x * S, p.y * S);
+  // Draw ALL assets' shape outlines
+  const selId = getSelectedAssetId();
+  for (const asset of getAllAssets()) {
+    if (asset.id === selId) continue; // draw selected last, with transform
+    const assetShape = asset.particles?.shape || (asset.nodeState?.currentShape);
+    if (assetShape) {
+      drawShapeOutline(octx, assetShape, '#1a1a1a', 1);
     }
-    octx.closePath();
-    octx.strokeStyle = '#2a2a2a';
-    octx.lineWidth = 1.5;
-    octx.stroke();
+  }
+
+  // Apply visual transform during shape drag/slider preview (for selected asset only)
+  const hasTransform = shapeTransform != null;
+  if (hasTransform) {
+    const { dx = 0, dy = 0, scale = 1, rotate = 0, cx = 0, cy = 0 } = shapeTransform;
+    octx.save();
+    octx.translate(cx * S, cy * S);
+    octx.rotate(rotate);
+    octx.scale(scale, scale);
+    octx.translate(-cx * S, -cy * S);
+    octx.translate(dx * S, dy * S);
+  }
+
+  // Selected shape outline (thicker, brighter)
+  if (selId !== null) {
+    if (currentShape) {
+      drawShapeOutline(octx, currentShape, '#555', 2);
+    } else {
+      octx.beginPath();
+      octx.arc(CX * S, CY * S, shapeRadius * S, 0, Math.PI * 2);
+      octx.strokeStyle = '#555';
+      octx.lineWidth = 2;
+      octx.stroke();
+    }
   } else {
-    octx.beginPath();
-    octx.arc(CX * S, CY * S, shapeRadius * S, 0, Math.PI * 2);
-    octx.strokeStyle = '#2a2a2a';
-    octx.lineWidth = 1.5;
-    octx.stroke();
+    // No selection — still draw current shape outline if any
+    if (currentShape) {
+      drawShapeOutline(octx, currentShape, '#2a2a2a', 1.5);
+    } else {
+      octx.beginPath();
+      octx.arc(CX * S, CY * S, shapeRadius * S, 0, Math.PI * 2);
+      octx.strokeStyle = '#2a2a2a';
+      octx.lineWidth = 1.5;
+      octx.stroke();
+    }
+  }
+
+  // Only draw nodes/anchors/flow indicator for selected asset
+  if (selId === null) {
+    if (hasTransform) octx.restore();
+    return;
   }
 
   // Flow direction indicator (circle mode only)
@@ -255,5 +302,10 @@ export function renderOverlay() {
     octx.textAlign = 'center';
     octx.textBaseline = 'top';
     octx.fillText(a.name, ax, ay + ds + 4);
+  }
+
+  // Restore after shape transform
+  if (hasTransform) {
+    octx.restore();
   }
 }

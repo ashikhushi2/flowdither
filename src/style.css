@@ -8,11 +8,83 @@ html, body {
   overflow: hidden;
 }
 
+/* ── Tab bar ──────────────────────────────────────────────────────────── */
+
+#tab-bar {
+  position: fixed;
+  top: 0; left: 0; right: 280px;
+  height: 32px;
+  background: #0c0c0c;
+  border-bottom: 1px solid #1a1a1a;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  z-index: 15;
+}
+#tab-bar::-webkit-scrollbar { height: 0; }
+
+.tab {
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 12px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: #666;
+  cursor: pointer;
+  border-right: 1px solid #1a1a1a;
+  white-space: nowrap;
+  transition: color 0.15s, background 0.15s;
+  font-family: inherit;
+  position: relative;
+}
+.tab:hover { color: #aaa; background: #111; }
+.tab.active {
+  color: #ccc;
+  background: #111;
+}
+.tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 2px;
+  background: #fff;
+}
+
+.tab-label {
+  pointer-events: auto;
+}
+
+.tab-close {
+  background: none; border: none;
+  color: #444; font-size: 13px;
+  cursor: pointer; padding: 0 2px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.tab-close:hover { color: #f44; }
+
+.tab-add {
+  background: none; border: none;
+  color: #555; font-size: 16px;
+  cursor: pointer; padding: 0 12px;
+  font-family: inherit;
+  transition: color 0.15s;
+}
+.tab-add:hover { color: #ccc; }
+
+.tab-rename-input {
+  background: #1a1a1a; border: 1px solid #555;
+  color: #ddd; font-family: inherit;
+  font-size: 9px; letter-spacing: 0.1em;
+  padding: 2px 4px; width: 80px;
+  outline: none; border-radius: 2px;
+}
+
 /* ── Canvas ────────────────────────────────────────────────────────────── */
 
 #canvas-wrap {
   position: fixed;
-  top: 0; left: 0; right: 280px; bottom: 0;
+  top: 32px; left: 0; right: 280px; bottom: 0;
   overflow: visible;
 }
 
@@ -99,38 +171,18 @@ html, body {
   padding: 0 14px 14px;
 }
 
-/* ── Shape section ────────────────────────────────────────────────────── */
+/* ── Panel dividers ───────────────────────────────────────────────────── */
 
-#drop-zone {
-  border: 1px dashed #333;
-  border-radius: 4px;
-  padding: 14px;
-  text-align: center;
-  transition: all 0.15s;
-  margin-bottom: 12px;
-}
-#drop-zone.drag-over {
-  border-color: #666;
-  background: #141414;
-}
-.drop-hint {
-  font-size: 8px;
-  color: #444;
-  margin-top: 5px;
-}
-#upload-btn {
-  background: none; border: none;
-  color: #888; font-family: inherit;
-  font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
-  cursor: pointer;
-  transition: color 0.15s;
-}
-#upload-btn:hover { color: #ccc; }
+.panel-divider { border-top: 1px solid #222; margin: 0; }
+
+/* ── Shape rows & selected controls ──────────────────────────────────── */
+
+#shapes-list { min-height: 0; }
+
+.shape-selected-controls { margin-top: 8px; }
+
 #file-input { display: none; }
 
-#dir-row {
-  display: flex; gap: 6px; margin-bottom: 12px;
-}
 .dir-btn {
   flex: 1; background: #111; border: 1px solid #282828;
   color: #777; font-family: inherit;
@@ -141,6 +193,22 @@ html, body {
 .dir-btn:hover { border-color: #444; color: #aaa; }
 .dir-btn.active { border-color: #555; color: #ddd; background: #181818; }
 
+/* ── Export dropdown ──────────────────────────────────────────────────── */
+
+.export-btn-wrap { position: relative; }
+.export-dropdown {
+  position: absolute; bottom: 100%; left: 0; right: 0;
+  background: #1a1a1a; border: 1px solid #333;
+  border-radius: 4px; overflow: hidden; z-index: 10;
+  margin-bottom: 4px;
+}
+.export-dropdown-item {
+  padding: 8px 12px; font-size: 10px; letter-spacing: 0.15em;
+  text-transform: uppercase; cursor: pointer; color: #888;
+}
+.export-dropdown-item:hover { background: #252525; color: #ccc; }
+.export-dropdown-item.disabled { opacity: 0.3; pointer-events: none; }
+
 .gr {
   display: flex; align-items: center; gap: 8px;
   font-size: 9px; color: #999; letter-spacing: 0.08em;
@@ -149,6 +217,14 @@ html, body {
 .gr:last-child { margin-bottom: 0; }
 .gr span:first-child { min-width: 42px; color: #999; }
 .gr .sv { color: #bbb; min-width: 38px; text-align: right; font-size: 9px; }
+.gr select {
+  flex: 1;
+  background: #111; border: 1px solid #282828;
+  color: #bbb; font-family: inherit;
+  font-size: 9px; padding: 5px 6px;
+  border-radius: 3px; outline: none;
+  cursor: pointer;
+}
 
 /* ── Item rows (compact node/anchor rows) ─────────────────────────────── */
 
@@ -326,7 +402,28 @@ input[type=range]:active::-webkit-slider-thumb { background: #fff; }
   background: rgba(255,170,0,0.04);
 }
 
-/* ── Export section ────────────────────────────────────────────────────── */
+/* ── Background color controls ────────────────────────────────────────── */
+
+#bg-color-picker {
+  width: 28px; height: 22px;
+  border: 1px solid #333; border-radius: 3px;
+  background: none; cursor: pointer;
+  padding: 0; flex-shrink: 0;
+}
+#bg-color-picker::-webkit-color-swatch-wrapper { padding: 1px; }
+#bg-color-picker::-webkit-color-swatch { border: none; border-radius: 2px; }
+
+.hex-input {
+  flex: 1;
+  background: #111; border: 1px solid #282828;
+  color: #bbb; font-family: inherit;
+  font-size: 9px; letter-spacing: 0.08em;
+  padding: 4px 6px; border-radius: 3px;
+  outline: none; max-width: 70px;
+}
+.hex-input:focus { border-color: #555; }
+
+/* ── Export / action buttons ──────────────────────────────────────────── */
 
 #export-btn {
   background: #181818; border: 1px solid #333;
@@ -336,6 +433,11 @@ input[type=range]:active::-webkit-slider-thumb { background: #fff; }
   transition: all 0.15s;
 }
 #export-btn:hover { border-color: #666; color: #ddd; }
+
+.danger-btn {
+  color: #c44 !important; border-color: #3a1a1a !important;
+}
+.danger-btn:hover { border-color: #c44 !important; color: #f66 !important; }
 
 /* ── Footer ────────────────────────────────────────────────────────────── */
 
@@ -434,7 +536,7 @@ input[type=range]:active::-webkit-slider-thumb { background: #fff; }
 
 #pause-indicator {
   position: fixed;
-  top: 20px; left: 50%;
+  top: 44px; left: 50%;
   transform: translateX(-50%);
   background: rgba(0,0,0,0.7);
   color: #999;

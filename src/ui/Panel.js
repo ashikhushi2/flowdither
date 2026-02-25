@@ -9,11 +9,16 @@ import {
 } from '../nodes/NodeManager.js';
 import { renderOverlay } from '../nodes/NodeOverlay.js';
 import { reinit as reinitParticles } from '../core/ParticleSystem.js';
+import {
+  getSelectedAssetId, getAllAssets, getAssetById,
+  removeAsset, selectAsset, deselectAll,
+  getBgColor, setBgColor, pushGlobalUndo,
+} from '../core/ShapeManager.js';
 
 // ── Popover state ───────────────────────────────────────────────────────────
-let openPopover = null;  // { type: 'node'|'anchor', id: number }
+let openPopover = null;  // { type: 'node'|'anchor'|'shape', id: number }
 
-function closePopover() {
+export function closePopover() {
   const el = document.getElementById('prop-popover');
   if (el) el.remove();
   openPopover = null;
@@ -22,6 +27,140 @@ function closePopover() {
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+// ── Shared row builder ──────────────────────────────────────────────────────
+const EDIT_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/>
+  <path d="M18.4 2.6a2.17 2.17 0 0 1 3 3L12 15l-4 1 1-4 9.4-9.4z"/>
+</svg>`;
+
+// ── Shape Popover ────────────────────────────────────────────────────────────
+
+function openShapePopover(asset, rowEl) {
+  closePopover();
+  openPopover = { type: 'shape', id: asset.id };
+
+  const state = getState();
+  const pop = document.createElement('div');
+  pop.id = 'prop-popover';
+  pop.className = 'prop-popover';
+
+  const panelEl = document.getElementById('panel');
+  const rowRect = rowEl.getBoundingClientRect();
+  const panelRect = panelEl.getBoundingClientRect();
+  pop.style.top = Math.max(8, rowRect.top) + 'px';
+  pop.style.right = (window.innerWidth - panelRect.left + 8) + 'px';
+
+  const flowDir = state.flowDir;
+  const fillPct = Math.round(state.fillDensity * 100);
+  const speedVal = state.speedMult.toFixed(1);
+  const grainVal = state.grainSpace;
+  const trailPct = Math.round(state.stretchPct * 100);
+
+  pop.innerHTML = `
+    <div class="pop-header">
+      <div class="ndot" style="background:#aaa;box-shadow:0 0 6px #aaa55"></div>
+      <input type="text" class="pop-name-input" value="${escapeHtml(asset.name)}" data-id="${asset.id}" data-type="shape" spellcheck="false">
+      <button class="pop-close">&times;</button>
+    </div>
+    <div class="pop-body">
+      <div class="pop-group-label">Direction</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <button class="dir-btn${flowDir === 1 ? ' active' : ''}" data-dir="1">CCW</button>
+        <button class="dir-btn${flowDir === -1 ? ' active' : ''}" data-dir="-1">CW</button>
+      </div>
+
+      <div class="pop-group-label">Flow</div>
+      <div class="sr">
+        <div class="sl"><span>Fill</span><span class="sv" id="pop-fill-val">${fillPct}%</span></div>
+        <input type="range" id="pop-fill-sl" min="5" max="100" value="${fillPct}">
+      </div>
+      <div class="sr">
+        <div class="sl"><span>Speed</span><span class="sv" id="pop-speed-val">${speedVal}\u00D7</span></div>
+        <input type="range" id="pop-speed-sl" min="5" max="400" value="${Math.round(state.speedMult * 100)}">
+      </div>
+      <div class="sr">
+        <div class="sl"><span>Grain</span><span class="sv" id="pop-grain-val">${grainVal}</span></div>
+        <input type="range" id="pop-grain-sl" min="3" max="28" value="${grainVal}" step="0.5">
+      </div>
+      <div class="sr">
+        <div class="sl"><span>Trail</span><span class="sv" id="pop-trail-val">${trailPct}%</span></div>
+        <input type="range" id="pop-trail-sl" min="10" max="85" value="${trailPct}" step="1">
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(pop);
+  bindShapePopoverEvents(pop, asset);
+}
+
+function bindShapePopoverEvents(pop, asset) {
+  // Push undo before any slider drag
+  pop.addEventListener('pointerdown', e => {
+    if (e.target.tagName === 'INPUT' && e.target.type === 'range') {
+      pushGlobalUndo();
+    }
+  });
+
+  pop.querySelector('.pop-close').addEventListener('click', () => {
+    closePopover();
+    buildPanel();
+  });
+
+  // Rename
+  pop.querySelector('.pop-name-input').addEventListener('focus', () => pushGlobalUndo());
+  pop.querySelector('.pop-name-input').addEventListener('input', e => {
+    const a = getAssetById(asset.id);
+    if (a) {
+      a.name = e.target.value || 'Shape';
+      const row = document.querySelector(`.item-row[data-shape-id="${a.id}"] .item-label`);
+      if (row) row.textContent = a.name;
+    }
+  });
+
+  // Direction buttons
+  pop.querySelectorAll('.dir-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      pushGlobalUndo();
+      setFlowDir(+b.dataset.dir);
+      pop.querySelectorAll('.dir-btn').forEach(x => x.classList.toggle('active', x === b));
+      buildPanel();
+      renderOverlay();
+    });
+  });
+
+  // Fill
+  const fillSl = pop.querySelector('#pop-fill-sl');
+  fillSl.addEventListener('input', () => {
+    setFillDensity(+fillSl.value / 100);
+    pop.querySelector('#pop-fill-val').textContent = fillSl.value + '%';
+    reinitParticles();
+  });
+
+  // Speed
+  const speedSl = pop.querySelector('#pop-speed-sl');
+  speedSl.addEventListener('input', () => {
+    const v = +speedSl.value / 100;
+    setSpeedMult(v);
+    pop.querySelector('#pop-speed-val').textContent = v.toFixed(1) + '\u00D7';
+  });
+
+  // Grain
+  const grainSl = pop.querySelector('#pop-grain-sl');
+  grainSl.addEventListener('input', () => {
+    setGrainSpace(+grainSl.value);
+    pop.querySelector('#pop-grain-val').textContent = grainSl.value;
+  });
+
+  // Trail
+  const trailSl = pop.querySelector('#pop-trail-sl');
+  trailSl.addEventListener('input', () => {
+    setStretchPct(+trailSl.value / 100);
+    pop.querySelector('#pop-trail-val').textContent = trailSl.value + '%';
+  });
+}
+
+// ── Node Popover ─────────────────────────────────────────────────────────────
 
 function openNodePopover(n, idx, rowEl) {
   closePopover();
@@ -99,17 +238,24 @@ function openNodePopover(n, idx, rowEl) {
 }
 
 function bindPopoverNodeEvents(pop, n, flowDir) {
+  // Push undo before any slider drag or checkbox toggle
+  pop.addEventListener('pointerdown', e => {
+    if (e.target.tagName === 'INPUT' && (e.target.type === 'range' || e.target.type === 'checkbox')) {
+      pushGlobalUndo();
+    }
+  });
+
   pop.querySelector('.pop-close').addEventListener('click', () => {
     closePopover();
     buildPanel();
   });
 
   // Rename
+  pop.querySelector('.pop-name-input').addEventListener('focus', () => pushGlobalUndo());
   pop.querySelector('.pop-name-input').addEventListener('input', e => {
     const nd = getNodeById(+e.target.dataset.id);
     if (nd) {
       nd.name = e.target.value || `Node ${nd.id}`;
-      // Update the row label in the panel
       const row = document.querySelector(`.item-row[data-id="${nd.id}"] .item-label`);
       if (row) row.textContent = nd.name;
       renderOverlay();
@@ -227,6 +373,8 @@ function bindPopoverNodeEvents(pop, n, flowDir) {
   });
 }
 
+// ── Anchor Popover ───────────────────────────────────────────────────────────
+
 function openAnchorPopover(a, rowEl) {
   closePopover();
   openPopover = { type: 'anchor', id: a.id };
@@ -265,12 +413,20 @@ function openAnchorPopover(a, rowEl) {
 
   document.body.appendChild(pop);
 
+  // Push undo before any slider drag
+  pop.addEventListener('pointerdown', e => {
+    if (e.target.tagName === 'INPUT' && e.target.type === 'range') {
+      pushGlobalUndo();
+    }
+  });
+
   pop.querySelector('.pop-close').addEventListener('click', () => {
     closePopover();
     buildPanel();
   });
 
   // Rename
+  pop.querySelector('.pop-name-input').addEventListener('focus', () => pushGlobalUndo());
   pop.querySelector('.pop-name-input').addEventListener('input', e => {
     const anc = getAnchorById(+e.target.dataset.aid);
     if (anc) {
@@ -313,16 +469,95 @@ function openAnchorPopover(a, rowEl) {
   });
 }
 
-// ── Shared row builder ──────────────────────────────────────────────────────
-const EDIT_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/>
-  <path d="M18.4 2.6a2.17 2.17 0 0 1 3 3L12 15l-4 1 1-4 9.4-9.4z"/>
-</svg>`;
+// ── Build Shape Rows ─────────────────────────────────────────────────────────
+
+function buildShapeRows() {
+  const shapesList = document.getElementById('shapes-list');
+  if (!shapesList) return;
+  shapesList.innerHTML = '';
+
+  const assets = getAllAssets();
+  const selId = getSelectedAssetId();
+
+  for (const asset of assets) {
+    const isSelected = asset.id === selId;
+    const row = document.createElement('div');
+    row.className = 'item-row' + (isSelected ? ' active' : '');
+    row.dataset.shapeId = asset.id;
+
+    const isOpen = openPopover?.type === 'shape' && openPopover.id === asset.id;
+
+    row.innerHTML = `
+      <div class="ndot" style="background:#aaa;box-shadow:0 0 6px #aaa55"></div>
+      <span class="item-label">${escapeHtml(asset.name)}</span>
+      <button class="item-edit${isOpen ? ' open' : ''}" data-shape-id="${asset.id}" title="Edit properties">${EDIT_ICON}</button>
+      <button class="ndel" data-shape-id="${asset.id}">&times;</button>
+    `;
+
+    row.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.item-edit') || e.target.closest('.ndel')) return;
+      if (!isSelected) {
+        selectAsset(asset.id);
+        if (window._syncAfterShapeSelect) window._syncAfterShapeSelect();
+        buildPanel();
+        renderOverlay();
+      }
+    });
+
+    row.querySelector('.item-edit').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!isSelected) {
+        selectAsset(asset.id);
+        if (window._syncAfterShapeSelect) window._syncAfterShapeSelect();
+      }
+      if (isOpen) {
+        closePopover();
+      } else {
+        openShapePopover(asset, row);
+      }
+      buildPanel();
+      renderOverlay();
+    });
+
+    row.querySelector('.ndel').addEventListener('click', (e) => {
+      e.stopPropagation();
+      pushGlobalUndo();
+      if (openPopover?.type === 'shape' && openPopover.id === asset.id) closePopover();
+      removeAsset(asset.id);
+      buildPanel();
+      renderOverlay();
+    });
+
+    shapesList.appendChild(row);
+  }
+}
 
 // ── Build Panel ─────────────────────────────────────────────────────────────
+
 export function buildPanel() {
   const state = getState();
   const { nodes, activeId, flowDir, anchors, placingAnchorForNode, activeAnchorId } = state;
+
+  // Build shape rows
+  buildShapeRows();
+
+  // Toggle shape-section visibility based on selection
+  const hasSelection = getSelectedAssetId() !== null;
+  document.querySelectorAll('.shape-section').forEach(el => {
+    el.style.display = hasSelection ? '' : 'none';
+  });
+
+  // Toggle shape-selected-controls
+  const shapeControls = document.querySelector('.shape-selected-controls');
+  if (shapeControls) {
+    shapeControls.style.display = hasSelection ? '' : 'none';
+  }
+
+  // Update export dropdown disabled state
+  const exportShapeItem = document.querySelector('.export-dropdown-item[data-mode="shape"]');
+  if (exportShapeItem) {
+    exportShapeItem.classList.toggle('disabled', !hasSelection);
+  }
 
   // ── Node rows ─────────────────────────────────────────────────────────────
   const nodesList = document.getElementById('nodes-list');
@@ -369,6 +604,7 @@ export function buildPanel() {
 
     row.querySelector('.ndel').addEventListener('click', (e) => {
       e.stopPropagation();
+      pushGlobalUndo();
       if (openPopover?.type === 'node' && openPopover.id === n.id) closePopover();
       deleteNode(n.id);
       buildPanel();
@@ -420,6 +656,7 @@ export function buildPanel() {
 
     row.querySelector('.ndel').addEventListener('click', (e) => {
       e.stopPropagation();
+      pushGlobalUndo();
       if (openPopover?.type === 'anchor' && openPopover.id === a.id) closePopover();
       deleteAnchor(a.id);
       buildPanel();
@@ -439,41 +676,17 @@ export function buildPanel() {
 }
 
 export function initGlobalControls() {
-  // Direction buttons
-  document.querySelectorAll('.dir-btn').forEach(b => {
-    b.addEventListener('click', () => {
-      setFlowDir(+b.dataset.dir);
-      document.querySelectorAll('.dir-btn').forEach(x => x.classList.toggle('active', x === b));
-      buildPanel();
-      renderOverlay();
+  // Add shape button → trigger file input
+  const addShapeBtn = document.getElementById('add-shape-btn');
+  if (addShapeBtn) {
+    addShapeBtn.addEventListener('click', () => {
+      document.getElementById('file-input').click();
     });
-  });
-
-  // Global sliders
-  document.getElementById('fill-sl').addEventListener('input', function () {
-    setFillDensity(+this.value / 100);
-    document.getElementById('fill-val').textContent = this.value + '%';
-    reinitParticles();
-  });
-
-  document.getElementById('speed-sl').addEventListener('input', function () {
-    const v = +this.value / 100;
-    setSpeedMult(v);
-    document.getElementById('speed-val').textContent = v.toFixed(1) + '\u00D7';
-  });
-
-  document.getElementById('grain-sl').addEventListener('input', function () {
-    setGrainSpace(+this.value);
-    document.getElementById('grain-val').textContent = this.value;
-  });
-
-  document.getElementById('stretch-sl').addEventListener('input', function () {
-    setStretchPct(+this.value / 100);
-    document.getElementById('stretch-val').textContent = this.value + '%';
-  });
+  }
 
   // Add node button
   document.getElementById('add-btn').addEventListener('click', () => {
+    pushGlobalUndo();
     addNodeAtBestGap();
     buildPanel();
     renderOverlay();
@@ -481,9 +694,62 @@ export function initGlobalControls() {
 
   // Add anchor button (top-level, no auto-link)
   document.getElementById('add-anchor-btn').addEventListener('click', () => {
+    pushGlobalUndo();
     setPlacingAnchor(-1);  // -1 = place without linking
     buildPanel();
   });
+
+  // ── Background color controls ──────────────────────────────────────────
+  const bgPicker = document.getElementById('bg-color-picker');
+  const bgHex = document.getElementById('bg-color-hex');
+
+  if (bgPicker) {
+    bgPicker.addEventListener('pointerdown', () => pushGlobalUndo());
+    bgPicker.addEventListener('input', () => {
+      setBgColor(bgPicker.value);
+      if (bgHex) bgHex.value = bgPicker.value;
+    });
+  }
+  if (bgHex) {
+    bgHex.addEventListener('focus', () => pushGlobalUndo());
+    bgHex.addEventListener('change', () => {
+      let val = bgHex.value.trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(val)) {
+        setBgColor(val);
+        if (bgPicker) bgPicker.value = val;
+      } else {
+        bgHex.value = getBgColor();
+      }
+    });
+  }
+
+  // ── Export dropdown ────────────────────────────────────────────────────
+  const exportBtn = document.getElementById('export-btn');
+  const exportDropdown = document.getElementById('export-dropdown');
+
+  if (exportBtn && exportDropdown) {
+    exportBtn.addEventListener('click', () => {
+      const isVisible = exportDropdown.style.display !== 'none';
+      exportDropdown.style.display = isVisible ? 'none' : '';
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('mousedown', (e) => {
+      if (exportDropdown.style.display !== 'none' &&
+          !exportBtn.contains(e.target) &&
+          !exportDropdown.contains(e.target)) {
+        exportDropdown.style.display = 'none';
+      }
+    });
+
+    exportDropdown.querySelectorAll('.export-dropdown-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const mode = item.dataset.mode;
+        exportDropdown.style.display = 'none';
+        if (window._openExportModal) window._openExportModal(mode);
+      });
+    });
+  }
 
   // Close popover when clicking outside
   document.addEventListener('mousedown', (e) => {

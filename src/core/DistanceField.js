@@ -87,6 +87,16 @@ export class DistanceField {
     return this.nearestIdx[iy * this.width + ix];
   }
 
+  // Shallow clone with a new shape reference (shares grid/nearestIdx data)
+  clone(newShape) {
+    const cloned = new DistanceField(newShape || this.shape);
+    cloned.width = this.width;
+    cloned.height = this.height;
+    cloned.grid = this.grid;           // share — immutable after compute()
+    cloned.nearestIdx = this.nearestIdx; // share
+    return cloned;
+  }
+
   // Get full boundary info for a pixel
   getNearestBoundaryInfo(x, y) {
     const idx = this.getNearestIndex(x, y);

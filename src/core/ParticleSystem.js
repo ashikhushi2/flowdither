@@ -295,16 +295,25 @@ export function update(dt) {
 }
 
 // ── Render ──────────────────────────────────────────────────────────────────
-export function render(ctx, w, h) {
-  if (!shape || count === 0) return;
 
-  const state = getState();
-  const { stretchPct } = state;
-
+// Clear canvas with trail effect (called once per frame, before all assets render)
+export function clearFrame(ctx, w, h, bgHex, stretchPct) {
   const trailAlpha = 0.05 + (1 - stretchPct) * 0.25;
-  ctx.fillStyle = `rgba(0,0,0,${trailAlpha})`;
+  // Parse bg hex to rgb
+  const r = parseInt(bgHex.slice(1, 3), 16) || 0;
+  const g = parseInt(bgHex.slice(3, 5), 16) || 0;
+  const b = parseInt(bgHex.slice(5, 7), 16) || 0;
+  ctx.fillStyle = `rgba(${r},${g},${b},${trailAlpha})`;
   ctx.fillRect(0, 0, w, h);
+}
 
+// Render currently loaded particles WITHOUT clearing canvas
+export function renderAssetParticles(ctx, w, h) {
+  if (!shape || count === 0) return;
+  drawParticles(ctx, w, h);
+}
+
+function drawParticles(ctx, w, h) {
   const NUM_BUCKETS = 8;
   const buckets = [];
   for (let b = 0; b < NUM_BUCKETS; b++) buckets.push([]);
@@ -315,7 +324,6 @@ export function render(ctx, w, h) {
 
     let alpha;
     if (pdetach[i]) {
-      // Detached particles: alpha = fade value directly (no distance modulation)
       alpha = 0.6 * fade;
     } else {
       const sd = sdf.sample(px[i], py[i]);
@@ -349,6 +357,19 @@ export function render(ctx, w, h) {
   }
 }
 
+export function render(ctx, w, h) {
+  if (!shape || count === 0) return;
+
+  const state = getState();
+  const { stretchPct } = state;
+
+  const trailAlpha = 0.05 + (1 - stretchPct) * 0.25;
+  ctx.fillStyle = `rgba(0,0,0,${trailAlpha})`;
+  ctx.fillRect(0, 0, w, h);
+
+  drawParticles(ctx, w, h);
+}
+
 // ── Entry points ────────────────────────────────────────────────────────────
 export function renderFrame() {
   if (!shape) return;
@@ -374,5 +395,155 @@ export function reinit() {
   init(shape, sdf, Math.round(500 + state.fillDensity * 4500));
 }
 
+// Translate all particle positions and update shape/sdf references
+export function translateParticles(dx, dy, newShape, newSdf) {
+  shape = newShape;
+  sdf = newSdf;
+  for (let i = 0; i < count; i++) {
+    px[i] += dx;
+    py[i] += dy;
+  }
+}
+
+// Scale all particle positions relative to (cx, cy) and update shape/sdf references
+export function scaleParticles(factor, cx, cy, newShape, newSdf) {
+  shape = newShape;
+  sdf = newSdf;
+  for (let i = 0; i < count; i++) {
+    px[i] = cx + (px[i] - cx) * factor;
+    py[i] = cy + (py[i] - cy) * factor;
+  }
+}
+
+// Rotate all particle positions by angle (radians) around (cx, cy) and update shape/sdf references
+export function rotateParticles(angle, cx, cy, newShape, newSdf) {
+  shape = newShape;
+  sdf = newSdf;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  for (let i = 0; i < count; i++) {
+    const dx = px[i] - cx, dy = py[i] - cy;
+    px[i] = cx + dx * cos - dy * sin;
+    py[i] = cy + dx * sin + dy * cos;
+  }
+}
+
+// ── Save/Restore (for file switching) ────────────────────────────────────────
+export function saveParticleState() {
+  return {
+    px: px.slice(), py: py.slice(),
+    pvx: pvx.slice(), pvy: pvy.slice(),
+    plife: plife.slice(), pmaxLife: pmaxLife.slice(),
+    psize: psize.slice(), pescInf: pescInf.slice(), pfade: pfade.slice(),
+    pdetach: pdetach.slice(), pdirX: pdirX.slice(), pdirY: pdirY.slice(),
+    pSpeed: pSpeed.slice(), pSLen: pSLen.slice(), pDetachT: pDetachT.slice(),
+    pSourceNode: pSourceNode.slice(),
+    count,
+    shape, sdf,
+  };
+}
+
+export function restoreParticleState(snapshot) {
+  if (!snapshot) {
+    reset();
+    return;
+  }
+  px.set(snapshot.px); py.set(snapshot.py);
+  pvx.set(snapshot.pvx); pvy.set(snapshot.pvy);
+  plife.set(snapshot.plife); pmaxLife.set(snapshot.pmaxLife);
+  psize.set(snapshot.psize); pescInf.set(snapshot.pescInf); pfade.set(snapshot.pfade);
+  pdetach.set(snapshot.pdetach); pdirX.set(snapshot.pdirX); pdirY.set(snapshot.pdirY);
+  pSpeed.set(snapshot.pSpeed); pSLen.set(snapshot.pSLen); pDetachT.set(snapshot.pDetachT);
+  pSourceNode.set(snapshot.pSourceNode);
+  count = snapshot.count;
+  shape = snapshot.shape;
+  sdf = snapshot.sdf;
+}
+
+export function reset() {
+  count = 0;
+  shape = null;
+  sdf = null;
+  px.fill(0); py.fill(0);
+  pvx.fill(0); pvy.fill(0);
+  plife.fill(0); pmaxLife.fill(0);
+  psize.fill(0); pescInf.fill(0); pfade.fill(0);
+  pdetach.fill(0); pdirX.fill(0); pdirY.fill(0);
+  pSpeed.fill(0); pSLen.fill(0); pDetachT.fill(0);
+  pSourceNode.fill(-1);
+}
+
 export function getParticleShape() { return shape; }
 export function getParticleSdf() { return sdf; }
+
+// ── Multi-asset snapshot support ──────────────────────────────────────────────
+
+export function createParticleSnapshot(maxCount) {
+  return {
+    px: new Float32Array(maxCount),
+    py: new Float32Array(maxCount),
+    pvx: new Float32Array(maxCount),
+    pvy: new Float32Array(maxCount),
+    plife: new Float32Array(maxCount),
+    pmaxLife: new Float32Array(maxCount),
+    psize: new Float32Array(maxCount),
+    pescInf: new Float32Array(maxCount),
+    pfade: new Float32Array(maxCount),
+    pdetach: new Uint8Array(maxCount),
+    pdirX: new Float32Array(maxCount),
+    pdirY: new Float32Array(maxCount),
+    pSpeed: new Float32Array(maxCount),
+    pSLen: new Float32Array(maxCount),
+    pDetachT: new Float32Array(maxCount),
+    pSourceNode: new Int16Array(maxCount).fill(-1),
+    count: 0,
+    maxCount,
+    shape: null,
+    sdf: null,
+  };
+}
+
+export function loadFromSnapshot(snap) {
+  const n = Math.min(snap.count, MAX_PARTICLES);
+  px.set(snap.px.subarray(0, snap.maxCount));
+  py.set(snap.py.subarray(0, snap.maxCount));
+  pvx.set(snap.pvx.subarray(0, snap.maxCount));
+  pvy.set(snap.pvy.subarray(0, snap.maxCount));
+  plife.set(snap.plife.subarray(0, snap.maxCount));
+  pmaxLife.set(snap.pmaxLife.subarray(0, snap.maxCount));
+  psize.set(snap.psize.subarray(0, snap.maxCount));
+  pescInf.set(snap.pescInf.subarray(0, snap.maxCount));
+  pfade.set(snap.pfade.subarray(0, snap.maxCount));
+  pdetach.set(snap.pdetach.subarray(0, snap.maxCount));
+  pdirX.set(snap.pdirX.subarray(0, snap.maxCount));
+  pdirY.set(snap.pdirY.subarray(0, snap.maxCount));
+  pSpeed.set(snap.pSpeed.subarray(0, snap.maxCount));
+  pSLen.set(snap.pSLen.subarray(0, snap.maxCount));
+  pDetachT.set(snap.pDetachT.subarray(0, snap.maxCount));
+  pSourceNode.set(snap.pSourceNode.subarray(0, snap.maxCount));
+  count = n;
+  shape = snap.shape;
+  sdf = snap.sdf;
+}
+
+export function saveToSnapshot(snap) {
+  const n = Math.min(count, snap.maxCount);
+  snap.px.set(px.subarray(0, snap.maxCount));
+  snap.py.set(py.subarray(0, snap.maxCount));
+  snap.pvx.set(pvx.subarray(0, snap.maxCount));
+  snap.pvy.set(pvy.subarray(0, snap.maxCount));
+  snap.plife.set(plife.subarray(0, snap.maxCount));
+  snap.pmaxLife.set(pmaxLife.subarray(0, snap.maxCount));
+  snap.psize.set(psize.subarray(0, snap.maxCount));
+  snap.pescInf.set(pescInf.subarray(0, snap.maxCount));
+  snap.pfade.set(pfade.subarray(0, snap.maxCount));
+  snap.pdetach.set(pdetach.subarray(0, snap.maxCount));
+  snap.pdirX.set(pdirX.subarray(0, snap.maxCount));
+  snap.pdirY.set(pdirY.subarray(0, snap.maxCount));
+  snap.pSpeed.set(pSpeed.subarray(0, snap.maxCount));
+  snap.pSLen.set(pSLen.subarray(0, snap.maxCount));
+  snap.pDetachT.set(pDetachT.subarray(0, snap.maxCount));
+  snap.pSourceNode.set(pSourceNode.subarray(0, snap.maxCount));
+  snap.count = n;
+  snap.shape = shape;
+  snap.sdf = sdf;
+}

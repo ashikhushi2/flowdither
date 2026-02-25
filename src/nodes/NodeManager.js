@@ -1,4 +1,4 @@
-import { CX, CY, DH } from '../utils/canvas.js';
+import { CX, CY } from '../utils/canvas.js';
 import { normA } from '../utils/math.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ let speedMult = 1.0;
 let grainSpace = 9;
 let stretchPct = 0.45;
 
-let shapeRadius = DH * 0.18;
+let shapeRadius = 108; // fixed default (600 * 0.18), doesn't change on resize
 let currentShape = null; // Shape object when using SVG
 let currentSDF = null;   // DistanceField when using SVG
 let paused = false;
@@ -67,13 +67,14 @@ export function setSpeedMult(v) { speedMult = v; }
 export function setGrainSpace(v) { grainSpace = v; }
 export function setStretchPct(v) { stretchPct = v; }
 export function setPaused(v) { paused = v; }
+export function setShapeRadius(r) { shapeRadius = r; }
 export function togglePaused() { paused = !paused; return paused; }
 
-export function setShape(shape, sdf) {
+export function setShape(shape, sdf, skipNodeUpdate) {
   currentShape = shape;
   currentSDF = sdf;
-  // Update node parametric positions
-  if (shape) {
+  // Update node parametric positions (skip when caller handles this, e.g. rotate/scale)
+  if (shape && !skipNodeUpdate) {
     for (const n of nodes) {
       // Convert angular position to parametric position on new shape
       const info = shape.getNearestBoundary(
@@ -309,6 +310,39 @@ export function deleteAnchor(id) {
   if (activeAnchorId === id) activeAnchorId = null;
 }
 
+export function translateAnchors(dx, dy) {
+  for (const a of anchors) {
+    a.x += dx;
+    a.y += dy;
+  }
+}
+
+// Rotate all nodes (angles + handleAngles) and anchors around (cx, cy)
+export function rotateNodesAndAnchors(angle, cx, cy) {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  for (const n of nodes) {
+    // Rotate node angular position
+    n.angle = normA(n.angle + angle);
+    // Rotate handle direction
+    n.handleAngle = normA(n.handleAngle + angle);
+  }
+  // Rotate anchor positions around center
+  for (const a of anchors) {
+    const dx = a.x - cx, dy = a.y - cy;
+    a.x = cx + dx * cos - dy * sin;
+    a.y = cy + dx * sin + dy * cos;
+  }
+}
+
+// Scale anchor positions relative to (cx, cy)
+export function scaleAnchors(factor, cx, cy) {
+  for (const a of anchors) {
+    a.x = cx + (a.x - cx) * factor;
+    a.y = cy + (a.y - cy) * factor;
+    a.radius *= factor;
+  }
+}
+
 export function setActiveAnchorId(id) { activeAnchorId = id; }
 export function setPlacingAnchor(nodeId) { placingAnchorForNode = nodeId; }
 export function getPlacingAnchor() { return placingAnchorForNode; }
@@ -323,6 +357,65 @@ export function linkAnchorToNode(nodeId, anchorId) {
   } else {
     n.linkedAnchors.push(anchorId);
   }
+}
+
+// ── Save/Restore (for file switching) ────────────────────────────────────────
+export function saveNodeState() {
+  return {
+    nodes: JSON.parse(JSON.stringify(nodes)),
+    anchors: JSON.parse(JSON.stringify(anchors)),
+    nextNodeId: nextId,
+    nextAnchorId: nextAnchorId,
+    flowDir,
+    activeNodeId: activeId,
+    activeAnchorId,
+    flowMode,
+    linearAng,
+    fillDensity,
+    speedMult,
+    grainSpace,
+    stretchPct,
+    undoStack: JSON.parse(JSON.stringify(undoStack)),
+    redoStack: JSON.parse(JSON.stringify(redoStack)),
+  };
+}
+
+export function restoreNodeState(snapshot) {
+  nodes = snapshot.nodes;
+  anchors = snapshot.anchors;
+  nextId = snapshot.nextNodeId;
+  nextAnchorId = snapshot.nextAnchorId;
+  flowDir = snapshot.flowDir;
+  activeId = snapshot.activeNodeId;
+  activeAnchorId = snapshot.activeAnchorId;
+  flowMode = snapshot.flowMode || 'tangential';
+  linearAng = snapshot.linearAng != null ? snapshot.linearAng : -Math.PI / 2;
+  fillDensity = snapshot.fillDensity != null ? snapshot.fillDensity : 0.70;
+  speedMult = snapshot.speedMult != null ? snapshot.speedMult : 1.0;
+  grainSpace = snapshot.grainSpace != null ? snapshot.grainSpace : 9;
+  stretchPct = snapshot.stretchPct != null ? snapshot.stretchPct : 0.45;
+  undoStack = snapshot.undoStack || [];
+  redoStack = snapshot.redoStack || [];
+  placingAnchorForNode = null;
+  dragState = null;
+  nodes.forEach(ensureNodeDefaults);
+}
+
+// ── Save/Restore with shape refs (for ShapeManager) ──────────────────────
+export function saveNodeStateWithShape() {
+  const snap = saveNodeState();
+  snap.currentShape = currentShape;
+  snap.currentSDF = currentSDF;
+  snap.shapeRadius = shapeRadius;
+  return snap;
+}
+
+export function restoreNodeStateWithShape(snap) {
+  if (!snap) return;
+  restoreNodeState(snap);
+  if (snap.currentShape !== undefined) currentShape = snap.currentShape;
+  if (snap.currentSDF !== undefined) currentSDF = snap.currentSDF;
+  if (snap.shapeRadius !== undefined) shapeRadius = snap.shapeRadius;
 }
 
 // ── Presets ──────────────────────────────────────────────────────────────────

@@ -1,6 +1,5 @@
 import { parseSVG } from '../core/ShapeParser.js';
 import { DistanceField } from '../core/DistanceField.js';
-import { setShape } from '../nodes/NodeManager.js';
 import { renderOverlay } from '../nodes/NodeOverlay.js';
 import { buildPanel } from './Panel.js';
 
@@ -15,11 +14,9 @@ function loadSVGString(svgString, fileName) {
     const shape = parseSVG(svgString);
     const sdf = new DistanceField(shape);
     sdf.compute();
-    setShape(shape, sdf);
 
-    buildPanel();
-    renderOverlay();
-    if (onShapeChange) onShapeChange();
+    // Notify main.js which will addAsset + selectAsset
+    if (onShapeChange) onShapeChange(shape, sdf, fileName);
 
     console.log(`Loaded shape: ${fileName || 'SVG'} (${shape.numPoints} boundary points)`);
   } catch (err) {
@@ -29,12 +26,7 @@ function loadSVGString(svgString, fileName) {
 }
 
 export function initUploadHandler() {
-  const uploadBtn = document.getElementById('upload-btn');
   const fileInput = document.getElementById('file-input');
-  const dropZone = document.getElementById('drop-zone');
-
-  // File picker
-  uploadBtn.addEventListener('click', () => fileInput.click());
 
   fileInput.addEventListener('change', e => {
     const file = e.target.files[0];
@@ -45,26 +37,23 @@ export function initUploadHandler() {
     fileInput.value = '';
   });
 
-  // Drag and drop
-  dropZone.addEventListener('dragover', e => {
-    e.preventDefault();
-    dropZone.classList.add('drag-over');
-  });
+  // Drag and drop on canvas area
+  const canvasWrap = document.getElementById('canvas-wrap');
+  if (canvasWrap) {
+    canvasWrap.addEventListener('dragover', e => {
+      e.preventDefault();
+    });
 
-  dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('drag-over');
-  });
-
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (!file || !file.name.endsWith('.svg')) {
-      alert('Please drop an SVG file');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = evt => loadSVGString(evt.target.result, file.name);
-    reader.readAsText(file);
-  });
+    canvasWrap.addEventListener('drop', e => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      if (!file || !file.name.endsWith('.svg')) {
+        alert('Please drop an SVG file');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = evt => loadSVGString(evt.target.result, file.name);
+      reader.readAsText(file);
+    });
+  }
 }

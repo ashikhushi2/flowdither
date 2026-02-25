@@ -35,6 +35,111 @@ export class Shape {
     };
   }
 
+  // Translate all boundary points by (dx, dy) and rebuild isPointInside
+  translate(dx, dy) {
+    for (let i = 0; i < this.numPoints; i++) {
+      this.points[i].x += dx;
+      this.points[i].y += dy;
+    }
+    this.bounds.minX += dx;
+    this.bounds.minY += dy;
+    this.bounds.maxX += dx;
+    this.bounds.maxY += dy;
+    this._rebuildIsPointInside();
+  }
+
+  // Scale all boundary points by factor around (cx, cy) and rebuild isPointInside
+  scale(factor, cx, cy) {
+    for (let i = 0; i < this.numPoints; i++) {
+      this.points[i].x = cx + (this.points[i].x - cx) * factor;
+      this.points[i].y = cy + (this.points[i].y - cy) * factor;
+    }
+    // Tangents and normals are unit vectors — uniform scale preserves direction
+    this.bounds.minX = cx + (this.bounds.minX - cx) * factor;
+    this.bounds.minY = cy + (this.bounds.minY - cy) * factor;
+    this.bounds.maxX = cx + (this.bounds.maxX - cx) * factor;
+    this.bounds.maxY = cy + (this.bounds.maxY - cy) * factor;
+    // Fix bounds if factor < 0 flipped them
+    if (this.bounds.minX > this.bounds.maxX) {
+      const tmp = this.bounds.minX; this.bounds.minX = this.bounds.maxX; this.bounds.maxX = tmp;
+    }
+    if (this.bounds.minY > this.bounds.maxY) {
+      const tmp = this.bounds.minY; this.bounds.minY = this.bounds.maxY; this.bounds.maxY = tmp;
+    }
+    this.pathLength *= Math.abs(factor);
+    this._rebuildIsPointInside();
+  }
+
+  // Rotate all boundary points by angle (radians) around (cx, cy) and rebuild isPointInside
+  rotate(angle, cx, cy) {
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i < this.numPoints; i++) {
+      const dx = this.points[i].x - cx, dy = this.points[i].y - cy;
+      this.points[i].x = cx + dx * cos - dy * sin;
+      this.points[i].y = cy + dx * sin + dy * cos;
+      if (this.points[i].x < minX) minX = this.points[i].x;
+      if (this.points[i].x > maxX) maxX = this.points[i].x;
+      if (this.points[i].y < minY) minY = this.points[i].y;
+      if (this.points[i].y > maxY) maxY = this.points[i].y;
+      // Rotate tangents and normals
+      const tx = this.tangents[i].x, ty = this.tangents[i].y;
+      this.tangents[i].x = tx * cos - ty * sin;
+      this.tangents[i].y = tx * sin + ty * cos;
+      const nx = this.normals[i].x, ny = this.normals[i].y;
+      this.normals[i].x = nx * cos - ny * sin;
+      this.normals[i].y = nx * sin + ny * cos;
+    }
+    this.bounds = { minX, minY, maxX, maxY };
+    this._rebuildIsPointInside();
+  }
+
+  // Rebuild isPointInside using a test canvas (shared by translate, scale, rotate)
+  _rebuildIsPointInside() {
+    const testCanvas = document.createElement('canvas');
+    const w = Math.ceil(this.bounds.maxX + 50);
+    const h = Math.ceil(this.bounds.maxY + 50);
+    testCanvas.width = w;
+    testCanvas.height = h;
+    const ctx = testCanvas.getContext('2d');
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'white';
+    ctx.beginPath();
+    for (let i = 0; i < this.numPoints; i++) {
+      const p = this.points[i];
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const pixels = imgData.data;
+    const tw = w;
+    this.isPointInside = (x, y) => {
+      const px = Math.round(x);
+      const py = Math.round(y);
+      if (px < 0 || px >= tw || py < 0 || py >= h) return false;
+      return pixels[(py * tw + px) * 4] > 128;
+    };
+  }
+
+  // Deep clone this shape (for undo snapshots)
+  clone() {
+    const pts = this.points.map(p => ({ x: p.x, y: p.y }));
+    const tans = this.tangents.map(t => ({ x: t.x, y: t.y }));
+    const norms = this.normals.map(n => ({ x: n.x, y: n.y }));
+    const cloned = new Shape({
+      points: pts,
+      tangents: tans,
+      normals: norms,
+      pathLength: this.pathLength,
+      isPointInside: this.isPointInside, // closure over pixel data, safe to share
+      bounds: { ...this.bounds },
+    });
+    return cloned;
+  }
+
   // Get position at parametric t (0-1) along boundary
   getPointAtT(t) {
     t = ((t % 1) + 1) % 1;

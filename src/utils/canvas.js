@@ -1,12 +1,21 @@
 export const SCALE = 3;
-export const DW = 600;
-export const DH = 600;
-export const W = DW * SCALE;
-export const H = DH * SCALE;
-export const CX = DW / 2;
-export const CY = DH / 2;
+export let DW = 600;
+export let DH = 600;
+export let W = DW * SCALE;
+export let H = DH * SCALE;
+export let CX = DW / 2;
+export let CY = DH / 2;
 
 let dc, oc, dctx, octx, buf, bctx, imgd, pxd;
+
+export function setCanvasDimensions(dw, dh) {
+  DW = dw;
+  DH = dh;
+  W = DW * SCALE;
+  H = DH * SCALE;
+  CX = DW / 2;
+  CY = DH / 2;
+}
 
 export function initCanvas() {
   dc = document.getElementById('dither-canvas');
@@ -30,6 +39,24 @@ export function initCanvas() {
   window.addEventListener('resize', resize);
 
   return { dc, oc, dctx, octx, buf, bctx, imgd, pxd };
+}
+
+export function resizeCanvasElements() {
+  if (!dc) return;
+  dc.width = oc.width = W;
+  dc.height = oc.height = H;
+  dctx = dc.getContext('2d');
+  dctx.imageSmoothingEnabled = false;
+  octx = oc.getContext('2d');
+
+  buf.width = DW;
+  buf.height = DH;
+  bctx = buf.getContext('2d');
+  imgd = bctx.createImageData(DW, DH);
+  pxd = imgd.data;
+  for (let i = 3; i < pxd.length; i += 4) pxd[i] = 255;
+
+  resize();
 }
 
 export function getCanvasRefs() {
