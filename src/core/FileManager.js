@@ -6,6 +6,7 @@ import { DistanceField } from './DistanceField.js';
 import {
   saveAllState, restoreAllState, getBgColor, setBgColor,
   addAsset, selectAsset, getSelectedAssetId,
+  serializeState, deserializeState,
 } from './ShapeManager.js';
 
 let files = [];
@@ -148,18 +149,16 @@ function initFreshFile(file) {
       { id: 2, name: 'Node 2', angle: Math.PI * 0.4, handleAngle: Math.PI * 0.4 - Math.PI / 2, bleed: 0, spread: 1.2, t: 0,
         directionStrength: 0.7, pull: 0.5, fade: 0.3, stretch: 0.5, streamLength: 0.5, linkedAnchors: [] },
     ],
-    anchors: [],
     nextNodeId: 3,
-    nextAnchorId: 1,
     flowDir: 1,
     activeNodeId: null,
-    activeAnchorId: null,
     flowMode: 'tangential',
     linearAng: -Math.PI / 2,
     fillDensity: 0.70,
     speedMult: 1.0,
     grainSpace: 9,
     stretchPct: 0.45,
+    particleColor: '#ffffff',
     undoStack: [],
     redoStack: [],
   });
@@ -185,4 +184,114 @@ export function updateActiveFileDimensions(w, h) {
   if (!file) return;
   file.canvasWidth = w;
   file.canvasHeight = h;
+}
+
+// ── Project export/import (.flowasset) ────────────────────────────────────────
+
+const AUTOSAVE_KEY = 'flow-dither-autosave';
+
+export function exportProject() {
+  // Save current file state
+  saveCurrentFile();
+
+  // Serialize each file's assets via ShapeManager
+  const serializedFiles = files.map(f => {
+    // For the active file, assets are already saved via saveCurrentFile().
+    // For non-active files, use their stored assetsSnapshot and serialize it.
+    let serializedAssets;
+    if (f.id === activeFileId) {
+      // Currently active — serializeState() captures live globals
+      serializedAssets = serializeState();
+    } else if (f.assetsSnapshot) {
+      // Non-active file: restore its snapshot, serialize, restore active
+      restoreAllState(f.assetsSnapshot);
+      serializedAssets = serializeState();
+      // Restore active file back
+      const activeFile = files.find(fl => fl.id === activeFileId);
+      if (activeFile && activeFile.assetsSnapshot) {
+        restoreAllState(activeFile.assetsSnapshot);
+        const selId = getSelectedAssetId();
+        if (selId !== null) selectAsset(selId);
+      }
+    } else {
+      serializedAssets = null;
+    }
+
+    return {
+      id: f.id,
+      name: f.name,
+      canvasWidth: f.canvasWidth,
+      canvasHeight: f.canvasHeight,
+      bgColor: f.bgColor,
+      assetsSnapshot: serializedAssets,
+    };
+  });
+
+  return {
+    format: 'flowasset',
+    version: 1,
+    files: serializedFiles,
+    activeFileId,
+  };
+}
+
+export function importProject(data) {
+  if (!data || data.format !== 'flowasset' || data.version !== 1) {
+    throw new Error('Invalid .flowasset file');
+  }
+
+  // Rebuild files array
+  files = data.files.map(f => ({
+    id: f.id,
+    name: f.name || 'Untitled',
+    canvasWidth: (Number.isFinite(f.canvasWidth) && f.canvasWidth > 0) ? f.canvasWidth : 600,
+    canvasHeight: (Number.isFinite(f.canvasHeight) && f.canvasHeight > 0) ? f.canvasHeight : 600,
+    assetsSnapshot: null, // will be rebuilt below
+    bgColor: f.bgColor || '#000000',
+  }));
+
+  // Find the max file ID for nextFileId
+  nextFileId = Math.max(...files.map(f => f.id)) + 1;
+
+  // Deserialize each file's assets snapshot
+  for (const fd of data.files) {
+    const file = files.find(f => f.id === fd.id);
+    if (!file || !fd.assetsSnapshot) continue;
+
+    // Temporarily set canvas dims for SDF computation
+    setCanvasDimensions(file.canvasWidth, file.canvasHeight);
+
+    // Deserialize: rebuilds shapes (raycast), SDFs, typed arrays
+    deserializeState(fd.assetsSnapshot);
+    // Save as a live snapshot for this file
+    file.assetsSnapshot = saveAllState();
+  }
+
+  // Activate the saved active file
+  activeFileId = null; // force re-activation
+  const targetId = data.activeFileId || files[0].id;
+  activateFile(targetId);
+}
+
+export function autoSaveToLocalStorage() {
+  try {
+    const data = exportProject();
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(data));
+  } catch (e) {
+    // Silently fail — localStorage may be full or unavailable
+  }
+}
+
+export function loadAutoSave() {
+  try {
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    importProject(data);
+    return true;
+  } catch (e) {
+    // Corrupt autosave — remove it
+    localStorage.removeItem(AUTOSAVE_KEY);
+    return false;
+  }
 }

@@ -1,5 +1,5 @@
 import './style.css';
-import { initCanvas, toDither, CX, CY, W, H, DW, DH, setCanvasDimensions, resizeCanvasElements, resize } from './utils/canvas.js';
+import { initCanvas, toDither, CX, CY, W, H, DW, DH, setCanvasDimensions, resizeCanvasElements, resize, getCanvasZoom, setCanvasZoom, getCanvasPan, setCanvasPan, resetCanvasView } from './utils/canvas.js';
 import { getCanvasRefs } from './utils/canvas.js';
 import { normA } from './utils/math.js';
 import {
@@ -14,7 +14,7 @@ import {
   addNodeAtBestGap, selectNodeByIndex, togglePaused,
   setShape, setActiveAnchorId, getPlacingAnchor, setPlacingAnchor, clearPlacingAnchor,
   addAnchor, linkAnchorToNode, deleteAnchor,
-  translateAnchors, rotateNodesAndAnchors, scaleAnchors,
+  translateAnchors, rotateNodes, rotateAnchors, scaleAnchors,
   saveNodeStateWithShape, restoreNodeStateWithShape, restoreNodeState,
 } from './nodes/NodeManager.js';
 import { buildPanel, initGlobalControls } from './ui/Panel.js';
@@ -22,13 +22,16 @@ import { initUploadHandler, setOnShapeChange } from './ui/UploadHandler.js';
 import { initExportModal, openExportModal } from './ui/ExportModal.js';
 import { createCircleShape } from './core/ShapeParser.js';
 import { DistanceField } from './core/DistanceField.js';
-import { initFileManager, setOnSwitch, updateActiveFileDimensions } from './core/FileManager.js';
+import {
+  initFileManager, setOnSwitch, updateActiveFileDimensions,
+  exportProject, importProject, autoSaveToLocalStorage, loadAutoSave,
+} from './core/FileManager.js';
 import { buildTabBar } from './ui/TabBar.js';
 import {
   addAsset, removeAsset, selectAsset, deselectAll,
   saveCurrentAssetLiveState, getSelectedAssetId, getAllAssets, getAssetById,
   getBgColor, setBgColor, getMaxPerAsset,
-  pushGlobalUndo, globalUndo, globalRedo,
+  pushGlobalUndo, globalUndo, globalRedo, duplicateAsset,
 } from './core/ShapeManager.js';
 
 // ── Fresh default node state (used for new assets) ───────────────────────────
@@ -40,18 +43,16 @@ function createDefaultNodeState() {
       { id: 2, name: 'Node 2', angle: Math.PI * 0.4, handleAngle: Math.PI * 0.4 - Math.PI / 2, bleed: 0, spread: 1.2, t: 0,
         directionStrength: 0.7, pull: 0.5, fade: 0.3, stretch: 0.5, streamLength: 0.5, linkedAnchors: [] },
     ],
-    anchors: [],
     nextNodeId: 3,
-    nextAnchorId: 1,
     flowDir: 1,
     activeNodeId: null,
-    activeAnchorId: null,
     flowMode: 'tangential',
     linearAng: -Math.PI / 2,
     fillDensity: 0.70,
     speedMult: 1.0,
     grainSpace: 9,
     stretchPct: 0.45,
+    particleColor: '#ffffff',
     undoStack: [],
     redoStack: [],
   };
@@ -64,7 +65,32 @@ initUploadHandler();
 initExportModal();
 
 // ── Wire Panel callbacks ──────────────────────────────────────────────────────
-window._openExportModal = (mode) => openExportModal(mode);
+window._openExportModal = (mode) => {
+  if (mode === 'load') {
+    // Trigger file open dialog
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.flowasset,.json';
+    input.onchange = () => {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(reader.result);
+          importProject(data);
+          showToast('Project loaded');
+        } catch (err) {
+          showToast('Failed to load project');
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+    return;
+  }
+  openExportModal(mode);
+};
 window._syncAfterShapeSelect = () => {
   syncGlobalSlidersFromState();
   syncPositionSliders(0, 0);
@@ -88,30 +114,36 @@ setOnSwitch(() => {
 initFileManager();
 buildTabBar();
 
-// ── Load default circle shape via ShapeManager ───────────────────────────────
-const defaultShape = createCircleShape(108);
-const defaultSdf = new DistanceField(defaultShape);
-defaultSdf.compute();
+// ── Try restoring from autosave, otherwise create default shape ─────────────
+const didRestore = loadAutoSave();
 
-// Create first asset
-const firstAsset = addAsset(defaultShape, defaultSdf, 'Circle');
+if (didRestore) {
+  syncGlobalSlidersFromState();
+  syncPositionSliders(0, 0);
+  syncScaleRotateSliders(100, 0);
+  syncBgColorControls();
+  updateCanvasSizeDropdown();
+  updateExportResolutionLabels();
+  updatePositionSliderRanges();
+} else {
+  // Load default circle shape via ShapeManager
+  const defaultShape = createCircleShape(108);
+  const defaultSdf = new DistanceField(defaultShape);
+  defaultSdf.compute();
 
-// Set up NodeManager globals for this asset
-setShape(defaultShape, defaultSdf);
+  const firstAsset = addAsset(defaultShape, defaultSdf, 'Circle');
+  setShape(defaultShape, defaultSdf);
 
-// Init particles into global arrays
-const state0 = getState();
-const initCount = Math.min(Math.round(500 + state0.fillDensity * 4500), getMaxPerAsset());
-initParticles(defaultShape, defaultSdf, initCount);
+  const state0 = getState();
+  const initCount = Math.min(Math.round(500 + state0.fillDensity * 4500), getMaxPerAsset());
+  initParticles(defaultShape, defaultSdf, initCount);
 
-// Save initial state into asset
-firstAsset.nodeState = saveNodeStateWithShape();
-saveToSnapshot(firstAsset.particles);
+  firstAsset.nodeState = saveNodeStateWithShape();
+  saveToSnapshot(firstAsset.particles);
+  selectAsset(firstAsset.id);
+}
 
-// Select it
-selectAsset(firstAsset.id);
-
-// Clear dither canvas to black initially
+// Clear dither canvas
 {
   const { dctx } = getCanvasRefs();
   dctx.fillStyle = getBgColor();
@@ -163,6 +195,19 @@ pauseDiv.textContent = 'PAUSED';
 pauseDiv.style.display = 'none';
 document.body.appendChild(pauseDiv);
 
+// ── Toast notification ────────────────────────────────────────────────────────
+const toastEl = document.createElement('div');
+toastEl.className = 'save-toast';
+document.body.appendChild(toastEl);
+let toastTimer = null;
+
+function showToast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2000);
+}
+
 // ── Canvas size dropdown ─────────────────────────────────────────────────────
 const canvasSizeSel = document.getElementById('canvas-size-sel');
 canvasSizeSel.addEventListener('change', () => {
@@ -207,6 +252,9 @@ canvasSizeSel.addEventListener('change', () => {
     asset.shape = asset.nodeState.currentShape;
     asset.sdf = asset.nodeState.currentSDF;
   }
+
+  // Translate global anchors to new canvas center
+  translateAnchors(dx, dy);
 
   // Restore selected asset back into globals
   const selId = getSelectedAssetId();
@@ -270,7 +318,6 @@ function commitPositionSliders() {
   newSdf.compute();
   setShape(s.currentShape, newSdf);
   translateParticles(dx, dy, s.currentShape, newSdf);
-  translateAnchors(dx, dy);
 
   const { dctx } = getCanvasRefs();
   const imgData = dctx.getImageData(0, 0, W, H);
@@ -347,11 +394,10 @@ function commitScaleRotate() {
 
   if (Math.abs(deltaScale - 1) >= 0.001) {
     s.currentShape.scale(deltaScale, cx, cy);
-    scaleAnchors(deltaScale, cx, cy);
   }
   if (Math.abs(deltaRotate) >= 0.001) {
     s.currentShape.rotate(deltaRotate, cx, cy);
-    rotateNodesAndAnchors(deltaRotate, cx, cy);
+    rotateNodes(deltaRotate);
   }
 
   const newSdf = new DistanceField(s.currentShape);
@@ -433,6 +479,9 @@ function updateExportResolutionLabels() {
 
 updateExportResolutionLabels();
 
+// ── Clipboard for copy/paste ──────────────────────────────────────────────────
+let clipboardAssetId = null;
+
 // ── Drag handling ────────────────────────────────────────────────────────────
 let shapeDrag = null;
 const oc = document.getElementById('overlay-canvas');
@@ -495,10 +544,26 @@ oc.addEventListener('mousedown', e => {
       return;
     }
 
-    // Check if click is inside selected shape — start drag
+    // Check if click is inside selected shape — start drag (or Option+drag to duplicate)
     const st = getState();
     if (st.currentSDF && st.currentSDF.sample(pos.x, pos.y) < 0) {
       pushGlobalUndo();
+      if (e.altKey) {
+        // Option+Drag: duplicate the shape and drag the copy
+        saveCurrentAssetLiveState();
+        const newAsset = duplicateAsset(selId, 0, 0);
+        if (newAsset) {
+          selectAsset(newAsset.id);
+          shapeDrag = { startX: pos.x, startY: pos.y, dx: 0, dy: 0 };
+          setActiveId(null);
+          setActiveAnchorId(null);
+          syncPositionSliders(0, 0);
+          syncScaleRotateSliders(100, 0);
+          buildPanel();
+          renderOverlay();
+          return;
+        }
+      }
       shapeDrag = { startX: pos.x, startY: pos.y, dx: 0, dy: 0 };
       setActiveId(null);
       setActiveAnchorId(null);
@@ -508,10 +573,28 @@ oc.addEventListener('mousedown', e => {
     }
   }
 
-  // Check if click is inside any other shape → select it
+  // Check if click is inside any other shape → select it (or Option+click to duplicate)
   for (const asset of getAllAssets()) {
     if (asset.id === selId) continue;
     if (asset.particles.sdf && asset.particles.sdf.sample(pos.x, pos.y) < 0) {
+      if (e.altKey) {
+        // Option+Drag on non-selected shape: select it, duplicate, and drag the copy
+        pushGlobalUndo();
+        selectAsset(asset.id);
+        saveCurrentAssetLiveState();
+        const newAsset = duplicateAsset(asset.id, 0, 0);
+        if (newAsset) {
+          selectAsset(newAsset.id);
+          shapeDrag = { startX: pos.x, startY: pos.y, dx: 0, dy: 0 };
+          setActiveId(null);
+          setActiveAnchorId(null);
+          syncPositionSliders(0, 0);
+          syncScaleRotateSliders(100, 0);
+          buildPanel();
+          renderOverlay();
+          return;
+        }
+      }
       selectAsset(asset.id);
       syncGlobalSlidersFromState();
       syncPositionSliders(0, 0);
@@ -584,7 +667,6 @@ oc.addEventListener('mouseup', () => {
         newSdf.compute();
         setShape(s.currentShape, newSdf);
         translateParticles(dx, dy, s.currentShape, newSdf);
-        translateAnchors(dx, dy);
 
         const { dctx } = getCanvasRefs();
         const imgData = dctx.getImageData(0, 0, W, H);
@@ -617,14 +699,74 @@ function t2m(e) {
   return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
 }
 oc.addEventListener('touchstart', e => {
+  if (e.touches.length >= 2) return; // let pinch handler take over
   e.preventDefault();
   oc.dispatchEvent(new MouseEvent('mousedown', t2m(e)));
 }, { passive: false });
 oc.addEventListener('touchmove', e => {
+  if (e.touches.length >= 2) return; // let pinch handler take over
   e.preventDefault();
   oc.dispatchEvent(new MouseEvent('mousemove', t2m(e)));
 }, { passive: false });
-oc.addEventListener('touchend', () => oc.dispatchEvent(new MouseEvent('mouseup')));
+oc.addEventListener('touchend', () => {
+  if (pinchState) { pinchState = null; return; }
+  oc.dispatchEvent(new MouseEvent('mouseup'));
+});
+
+// ── Pinch-to-zoom & scroll-wheel zoom ────────────────────────────────────────
+let pinchState = null;
+
+oc.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    e.preventDefault();
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+    const pan = getCanvasPan();
+    pinchState = {
+      startDist: dist,
+      startZoom: getCanvasZoom(),
+      startPanX: pan.x,
+      startPanY: pan.y,
+      startMidX: (t0.clientX + t1.clientX) / 2,
+      startMidY: (t0.clientY + t1.clientY) / 2,
+    };
+  }
+}, { passive: false });
+
+oc.addEventListener('touchmove', e => {
+  if (e.touches.length === 2 && pinchState) {
+    e.preventDefault();
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+    const scale = dist / pinchState.startDist;
+    setCanvasZoom(pinchState.startZoom * scale);
+
+    const midX = (t0.clientX + t1.clientX) / 2;
+    const midY = (t0.clientY + t1.clientY) / 2;
+    setCanvasPan(
+      pinchState.startPanX + (midX - pinchState.startMidX),
+      pinchState.startPanY + (midY - pinchState.startMidY)
+    );
+  }
+}, { passive: false });
+
+// Scroll wheel zoom (Ctrl+scroll or trackpad pinch which fires wheel with ctrlKey)
+const canvasWrap = document.getElementById('canvas-wrap');
+canvasWrap.addEventListener('wheel', e => {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    const delta = -e.deltaY * 0.005;
+    setCanvasZoom(getCanvasZoom() * (1 + delta));
+  }
+}, { passive: false });
+
+// Reset zoom with Ctrl+0
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+    e.preventDefault();
+    resetCanvasView();
+  }
+});
 
 // ── Shape-level undo restore helper ──────────────────────────────────────────
 function restoreAfterUndo() {
@@ -653,6 +795,51 @@ function restoreAfterUndo() {
 // ── Keyboard shortcuts ───────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+
+  // ── Save project (Ctrl/Cmd+S) ──
+  if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    try {
+      const data = exportProject();
+      const json = JSON.stringify(data);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'project.flowasset';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Project saved');
+    } catch (err) {
+      showToast('Save failed');
+    }
+    return;
+  }
+
+  // ── Open project (Ctrl/Cmd+O) ──
+  if (e.key === 'o' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.flowasset,.json';
+    input.onchange = () => {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(reader.result);
+          importProject(data);
+          showToast('Project loaded');
+        } catch (err) {
+          showToast('Failed to load project');
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+    return;
+  }
 
   if (e.key === 'Delete' || e.key === 'Backspace') {
     e.preventDefault();
@@ -708,6 +895,27 @@ document.addEventListener('keydown', e => {
       selectNodeByIndex(parseInt(e.key) - 1);
       buildPanel();
       renderOverlay();
+    }
+  } else if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    const selId = getSelectedAssetId();
+    if (selId !== null) {
+      clipboardAssetId = selId;
+    }
+  } else if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (clipboardAssetId !== null && getAssetById(clipboardAssetId)) {
+      pushGlobalUndo();
+      saveCurrentAssetLiveState();
+      const newAsset = duplicateAsset(clipboardAssetId, 20, 20);
+      if (newAsset) {
+        selectAsset(newAsset.id);
+        syncPositionSliders(0, 0);
+        syncScaleRotateSliders(100, 0);
+        syncGlobalSlidersFromState();
+        buildPanel();
+        renderOverlay();
+      }
     }
   } else if (e.key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
     e.preventDefault();
@@ -782,6 +990,14 @@ function frame(ts) {
   last = ts;
   requestAnimationFrame(frame);
 }
+
+// Auto-save every 30 seconds
+setInterval(autoSaveToLocalStorage, 30000);
+
+// Save on page unload
+window.addEventListener('beforeunload', () => {
+  autoSaveToLocalStorage();
+});
 
 // ── Start ────────────────────────────────────────────────────────────────────
 buildPanel();

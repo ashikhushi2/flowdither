@@ -1,5 +1,7 @@
-import { saveNodeStateWithShape, restoreNodeStateWithShape } from '../nodes/NodeManager.js';
+import { saveNodeStateWithShape, restoreNodeStateWithShape, saveAnchorState, restoreAnchorState } from '../nodes/NodeManager.js';
 import { createParticleSnapshot, loadFromSnapshot, saveToSnapshot } from './ParticleSystem.js';
+import { DistanceField } from './DistanceField.js';
+import { Shape } from './ShapeParser.js';
 
 const MAX_PER_ASSET = 2000;
 
@@ -138,6 +140,7 @@ export function saveAllState() {
     selectedAssetId,
     nextAssetId,
     bgColor,
+    anchorState: saveAnchorState(),
   };
 }
 
@@ -175,9 +178,172 @@ export function restoreAllState(snapshot) {
   selectedAssetId = snapshot.selectedAssetId;
   nextAssetId = snapshot.nextAssetId;
   bgColor = snapshot.bgColor || '#000000';
+  if (snapshot.anchorState) restoreAnchorState(snapshot.anchorState);
 }
 
 export function getMaxPerAsset() { return MAX_PER_ASSET; }
+
+export function duplicateAsset(id, dx = 20, dy = 20) {
+  const src = assets.find(a => a.id === id);
+  if (!src) return null;
+
+  // Clone shape with offset
+  const clonedShape = src.shape.clone();
+  clonedShape.translate(dx, dy);
+  const clonedSdf = new DistanceField(clonedShape);
+  clonedSdf.compute();
+
+  // Clone nodeState
+  let clonedNodeState = null;
+  if (src.nodeState) {
+    clonedNodeState = { ...src.nodeState };
+    clonedNodeState.currentShape = clonedShape;
+    clonedNodeState.currentSDF = clonedSdf;
+    if (clonedNodeState.nodes) {
+      clonedNodeState.nodes = clonedNodeState.nodes.map(n => ({ ...n, linkedAnchors: n.linkedAnchors ? [...n.linkedAnchors] : [] }));
+    }
+    clonedNodeState.undoStack = [];
+    clonedNodeState.redoStack = [];
+  }
+
+  // Clone particles (deep copy all typed arrays)
+  const clonedParticles = {
+    px: src.particles.px.slice(),
+    py: src.particles.py.slice(),
+    pvx: src.particles.pvx.slice(),
+    pvy: src.particles.pvy.slice(),
+    plife: src.particles.plife.slice(),
+    pmaxLife: src.particles.pmaxLife.slice(),
+    psize: src.particles.psize.slice(),
+    pescInf: src.particles.pescInf.slice(),
+    pfade: src.particles.pfade.slice(),
+    pdetach: new Uint8Array(src.particles.pdetach),
+    pdirX: src.particles.pdirX.slice(),
+    pdirY: src.particles.pdirY.slice(),
+    pSpeed: src.particles.pSpeed.slice(),
+    pSLen: src.particles.pSLen.slice(),
+    pDetachT: src.particles.pDetachT.slice(),
+    pSourceNode: new Int16Array(src.particles.pSourceNode),
+    count: src.particles.count,
+    maxCount: src.particles.maxCount,
+    shape: clonedShape,
+    sdf: clonedSdf,
+  };
+  // Offset particle positions
+  for (let i = 0; i < clonedParticles.count; i++) {
+    clonedParticles.px[i] += dx;
+    clonedParticles.py[i] += dy;
+  }
+
+  const newId = nextAssetId++;
+  const newAsset = {
+    id: newId,
+    name: src.name + ' copy',
+    shape: clonedShape,
+    sdf: clonedSdf,
+    nodeState: clonedNodeState,
+    particles: clonedParticles,
+  };
+  assets.push(newAsset);
+  return newAsset;
+}
+
+// ── JSON serialization (for .flowasset save/load) ─────────────────────────────
+
+// Typed array field names in particle snapshots
+const FLOAT32_FIELDS = ['px','py','pvx','pvy','plife','pmaxLife','psize','pescInf','pfade','pdirX','pdirY','pSpeed','pSLen','pDetachT'];
+const UINT8_FIELDS = ['pdetach'];
+const INT16_FIELDS = ['pSourceNode'];
+
+export function serializeState() {
+  if (selectedAssetId !== null) {
+    saveCurrentAssetLiveState();
+  }
+  return {
+    assets: assets.map(a => {
+      const srcShape = (a.nodeState && a.nodeState.currentShape) || a.shape;
+
+      // Serialize nodeState, stripping non-serializable refs
+      let ns = null;
+      if (a.nodeState) {
+        ns = { ...a.nodeState };
+        // Remove object references that get rebuilt
+        delete ns.currentShape;
+        delete ns.currentSDF;
+        delete ns.undoStack;
+        delete ns.redoStack;
+        // Deep-copy nodes to plain objects
+        if (ns.nodes) ns.nodes = JSON.parse(JSON.stringify(ns.nodes));
+      }
+
+      // Serialize particles: typed arrays → regular arrays
+      const p = a.particles;
+      const sp = {
+        count: p.count,
+        maxCount: p.maxCount,
+      };
+      for (const k of FLOAT32_FIELDS) sp[k] = Array.from(p[k]);
+      for (const k of UINT8_FIELDS) sp[k] = Array.from(p[k]);
+      for (const k of INT16_FIELDS) sp[k] = Array.from(p[k]);
+
+      return {
+        id: a.id,
+        name: a.name,
+        shape: srcShape ? srcShape.toJSON() : null,
+        nodeState: ns,
+        particles: sp,
+      };
+    }),
+    selectedAssetId,
+    nextAssetId,
+    bgColor,
+    anchorState: saveAnchorState(),
+  };
+}
+
+export function deserializeState(data) {
+  assets = data.assets.map(a => {
+    // Reconstruct shape from JSON (uses raycast isPointInside)
+    const shape = a.shape ? Shape.fromJSON(a.shape) : null;
+
+    // Rebuild SDF from shape
+    let sdf = null;
+    if (shape) {
+      sdf = new DistanceField(shape);
+      sdf.compute();
+    }
+
+    // Rebuild nodeState with shape/sdf refs
+    let nodeState = null;
+    if (a.nodeState) {
+      nodeState = { ...a.nodeState };
+      nodeState.currentShape = shape;
+      nodeState.currentSDF = sdf;
+      nodeState.undoStack = [];
+      nodeState.redoStack = [];
+    }
+
+    // Rebuild particles: regular arrays → typed arrays
+    const sp = a.particles;
+    const maxCount = sp.maxCount || MAX_PER_ASSET;
+    const particles = {
+      count: sp.count || 0,
+      maxCount,
+      shape,
+      sdf,
+    };
+    for (const k of FLOAT32_FIELDS) particles[k] = new Float32Array(sp[k] || maxCount);
+    for (const k of UINT8_FIELDS) particles[k] = new Uint8Array(sp[k] || maxCount);
+    for (const k of INT16_FIELDS) particles[k] = new Int16Array(sp[k] || maxCount);
+
+    return { id: a.id, name: a.name, shape, sdf, nodeState, particles };
+  });
+
+  selectedAssetId = data.selectedAssetId;
+  nextAssetId = data.nextAssetId;
+  bgColor = data.bgColor || '#000000';
+  if (data.anchorState) restoreAnchorState(data.anchorState);
+}
 
 // ── Unified undo/redo (full state snapshots) ──────────────────────────────────
 

@@ -7,6 +7,8 @@ export let CX = DW / 2;
 export let CY = DH / 2;
 
 let dc, oc, dctx, octx, buf, bctx, imgd, pxd;
+let canvasZoom = 1;
+let panX = 0, panY = 0;
 
 export function setCanvasDimensions(dw, dh) {
   DW = dw;
@@ -68,13 +70,36 @@ export function resize() {
   const wrap = document.getElementById('canvas-wrap');
   const availW = wrap.clientWidth;
   const availH = wrap.clientHeight;
-  const scale = Math.min(availW / W, availH / H) * 0.95;
-  const dispW = Math.round(W * scale);
-  const dispH = Math.round(H * scale);
+  const baseScale = Math.min(availW / W, availH / H) * 0.95;
+  const dispW = Math.round(W * baseScale * canvasZoom);
+  const dispH = Math.round(H * baseScale * canvasZoom);
   [dc, oc].forEach(el => {
     el.style.width = dispW + 'px';
     el.style.height = dispH + 'px';
+    el.style.transform = `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px))`;
   });
+}
+
+export function getCanvasZoom() { return canvasZoom; }
+
+export function setCanvasZoom(z) {
+  canvasZoom = Math.max(0.25, Math.min(5, z));
+  resize();
+}
+
+export function setCanvasPan(x, y) {
+  panX = x;
+  panY = y;
+  resize();
+}
+
+export function getCanvasPan() { return { x: panX, y: panY }; }
+
+export function resetCanvasView() {
+  canvasZoom = 1;
+  panX = 0;
+  panY = 0;
+  resize();
 }
 
 export function toDither(e) {

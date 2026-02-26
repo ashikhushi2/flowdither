@@ -140,6 +140,33 @@ export class Shape {
     return cloned;
   }
 
+  // Serialize to a JSON-safe plain object (no closures, no pixel data)
+  toJSON() {
+    return {
+      points: this.points,
+      tangents: this.tangents,
+      normals: this.normals,
+      pathLength: this.pathLength,
+      bounds: this.bounds,
+    };
+  }
+
+  // Reconstruct a Shape from serialized JSON data
+  static fromJSON(data) {
+    const points = data.points.map(p => ({ x: p.x, y: p.y }));
+    const tangents = data.tangents.map(t => ({ x: t.x, y: t.y }));
+    const normals = data.normals.map(n => ({ x: n.x, y: n.y }));
+    const isPointInside = raycastIsPointInside(points);
+    return new Shape({
+      points,
+      tangents,
+      normals,
+      pathLength: data.pathLength,
+      isPointInside,
+      bounds: { ...data.bounds },
+    });
+  }
+
   // Get position at parametric t (0-1) along boundary
   getPointAtT(t) {
     t = ((t % 1) + 1) % 1;
@@ -151,6 +178,30 @@ export class Shape {
       index: idx,
     };
   }
+}
+
+// Ray-casting point-in-polygon test (even-odd rule)
+// Returns an isPointInside(x,y) closure over the given boundary points
+export function raycastIsPointInside(points) {
+  const n = points.length;
+  // Pre-copy into flat arrays for speed
+  const xs = new Float32Array(n);
+  const ys = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    xs[i] = points[i].x;
+    ys[i] = points[i].y;
+  }
+  return (x, y) => {
+    let inside = false;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const yi = ys[i], yj = ys[j];
+      if ((yi > y) !== (yj > y) &&
+          x < (xs[j] - xs[i]) * (y - yi) / (yj - yi) + xs[i]) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  };
 }
 
 // Create a circle shape (default)

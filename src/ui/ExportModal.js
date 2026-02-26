@@ -3,12 +3,29 @@ import { restoreNodeStateWithShape, saveNodeStateWithShape } from '../nodes/Node
 import { getState } from '../nodes/NodeManager.js';
 import { DW, DH } from '../utils/canvas.js';
 import { getAllAssets, getSelectedAssetId, getAssetById, getBgColor, saveCurrentAssetLiveState } from '../core/ShapeManager.js';
+import { exportProject, getActiveFile, renameFile } from '../core/FileManager.js';
+import { buildTabBar } from './TabBar.js';
 
 export function openExportModal(mode) {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
   if (mode === 'shape' && getSelectedAssetId() === null) return;
   modal._exportMode = mode || 'canvas';
+
+  // Pre-select format based on mode
+  const formatSelect = document.getElementById('export-format');
+  if (mode === 'project') {
+    formatSelect.value = 'flowasset';
+    // Pre-fill with current file name
+    const nameInput = document.getElementById('export-name');
+    const activeFile = getActiveFile();
+    if (nameInput && activeFile) nameInput.value = activeFile.name;
+  } else if (formatSelect.value === 'flowasset') {
+    // Switch away from flowasset if opening canvas/shape export
+    formatSelect.value = 'png';
+  }
+  formatSelect.dispatchEvent(new Event('change'));
+
   modal.classList.remove('hidden');
 }
 
@@ -26,10 +43,23 @@ export function initExportModal() {
   closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
   modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
 
-  formatSelect.addEventListener('change', () => {
-    const isAnim = formatSelect.value !== 'png';
+  const resGroup = document.getElementById('export-resolution').parentElement;
+  const bgGroup = document.getElementById('export-bg').parentElement;
+  const nameGroup = document.getElementById('export-name-group');
+
+  function updateFormatVisibility() {
+    const val = formatSelect.value;
+    const isProject = val === 'flowasset';
+    const isAnim = val !== 'png' && val !== 'flowasset';
     animOptions.classList.toggle('hidden', !isAnim);
-  });
+    resGroup.classList.toggle('hidden', isProject);
+    bgGroup.classList.toggle('hidden', isProject);
+    nameGroup.classList.toggle('hidden', !isProject);
+    goBtn.textContent = isProject ? 'Save' : 'Export';
+  }
+
+  formatSelect.addEventListener('change', updateFormatVisibility);
+  updateFormatVisibility();
 
   bgSelect.addEventListener('change', () => {
     bgColor.classList.toggle('hidden', bgSelect.value !== 'custom');
@@ -179,7 +209,29 @@ async function doExport(exportMode) {
   const prefix = exportMode === 'shape' ? 'flow-shape' : 'flow-dither';
 
   try {
-    if (format === 'png') {
+    if (format === 'flowasset') {
+      const projectName = document.getElementById('export-name').value.trim() || 'project';
+      // Rename the active file to match the project name
+      const activeFile = getActiveFile();
+      if (activeFile && projectName !== activeFile.name) {
+        renameFile(activeFile.id, projectName);
+        buildTabBar();
+      }
+      const data = exportProject();
+      const json = JSON.stringify(data);
+      const blob = new Blob([json], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.download = `${projectName}.flowasset`;
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      URL.revokeObjectURL(a.href);
+      progressFill.style.width = '100%';
+      progressText.textContent = '100%';
+      // Close modal after save
+      setTimeout(() => {
+        document.getElementById('export-modal').classList.add('hidden');
+      }, 500);
+    } else if (format === 'png') {
       const canvas = document.createElement('canvas');
       if (exportMode === 'shape') {
         renderSelectedAssetStatic(canvas, resMult, bg);

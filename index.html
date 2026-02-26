@@ -15,8 +15,7 @@
 
   <div id="panel">
     <div id="panel-header">
-      <h1>Flow Dither</h1>
-      <p class="panel-sub">Particle flow engine</p>
+      <img src="/src/assets/flow-logo.svg" alt="Flow Dither" class="panel-logo">
     </div>
 
     <div id="panel-scroll">
@@ -102,11 +101,13 @@
 
       <!-- ── Section 6: Export ─────────────────────────────────── -->
       <div class="panel-section">
-        <div class="section-body">
+        <div class="section-body" style="padding-top:14px">
           <div class="export-btn-wrap">
             <div id="export-dropdown" class="export-dropdown" style="display:none">
               <div class="export-dropdown-item" data-mode="canvas">Export Canvas</div>
               <div class="export-dropdown-item" data-mode="shape">Export Shape</div>
+              <div class="export-dropdown-item" data-mode="project">Save Project</div>
+              <div class="export-dropdown-item" data-mode="load">Load Project</div>
             </div>
             <button id="export-btn">EXPORT</button>
           </div>
@@ -118,7 +119,8 @@
     <div id="panel-footer">
       <div class="hint">
         <b>Space</b> pause &middot; <b>Del</b> remove &middot; <b>+/-</b> add/del<br>
-        <b>Ctrl+Z</b> undo &middot; <b>Ctrl+Shift+Z</b> redo &middot; <b>Click ring</b> add node
+        <b>Ctrl+Z</b> undo &middot; <b>Ctrl+Shift+Z</b> redo &middot; <b>Click ring</b> add node<br>
+        <b>Ctrl+S</b> save &middot; <b>Ctrl+O</b> load &middot; <b>Ctrl+0</b> reset zoom
       </div>
     </div>
   </div>
@@ -134,9 +136,14 @@
         <button class="modal-close">&times;</button>
       </div>
       <div class="modal-body">
+        <div class="export-group" id="export-name-group">
+          <label>Project Name</label>
+          <input type="text" id="export-name" value="project" spellcheck="false">
+        </div>
         <div class="export-group">
           <label>Format</label>
           <select id="export-format">
+            <option value="flowasset">.flowasset (Project File)</option>
             <option value="png">PNG (current frame)</option>
             <option value="png-sequence">PNG Sequence</option>
             <option value="gif">Animated GIF</option>

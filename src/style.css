@@ -14,8 +14,8 @@ html, body {
   position: fixed;
   top: 0; left: 0; right: 280px;
   height: 32px;
-  background: #0c0c0c;
-  border-bottom: 1px solid #1a1a1a;
+  background: #111111;
+  border-bottom: 1px solid #222;
   display: flex;
   align-items: stretch;
   overflow-x: auto;
@@ -37,10 +37,10 @@ html, body {
   font-family: inherit;
   position: relative;
 }
-.tab:hover { color: #aaa; background: #111; }
+.tab:hover { color: #aaa; background: #1a1a1a; }
 .tab.active {
   color: #ccc;
-  background: #111;
+  background: #1a1a1a;
 }
 .tab.active::after {
   content: '';
@@ -85,7 +85,7 @@ html, body {
 #canvas-wrap {
   position: fixed;
   top: 32px; left: 0; right: 280px; bottom: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 #dither-canvas, #overlay-canvas {
@@ -103,8 +103,8 @@ html, body {
   position: fixed;
   right: 0; top: 0; bottom: 0;
   width: 280px;
-  background: #0c0c0c;
-  border-left: 1px solid #1a1a1a;
+  background: #141414;
+  border-left: 1px solid #252525;
   display: flex; flex-direction: column;
   overflow: hidden;
   z-index: 20;
@@ -114,6 +114,12 @@ html, body {
 #panel-header {
   padding: 20px 16px 16px;
   border-bottom: 1px solid #222;
+}
+.panel-logo {
+  width: 180px;
+  height: auto;
+  opacity: 0.7;
+  margin-bottom: 8px;
 }
 #panel-header h1 {
   font-size: 11px;
@@ -199,7 +205,7 @@ html, body {
 .export-dropdown {
   position: absolute; bottom: 100%; left: 0; right: 0;
   background: #1a1a1a; border: 1px solid #333;
-  border-radius: 4px; overflow: hidden; z-index: 10;
+  border-radius: 4px; overflow: hidden; z-index: 25;
   margin-bottom: 4px;
 }
 .export-dropdown-item {
@@ -495,6 +501,14 @@ input[type=range]:active::-webkit-slider-thumb { background: #fff; }
   font-size: 9px; color: #777; letter-spacing: 0.15em;
   text-transform: uppercase; margin-bottom: 6px;
 }
+.export-group input[type=text] {
+  width: 100%;
+  background: #0d0d0d; border: 1px solid #282828;
+  color: #bbb; font-family: inherit;
+  font-size: 10px; padding: 8px;
+  border-radius: 3px; outline: none;
+}
+.export-group input[type=text]:focus { border-color: #555; }
 .export-group select, .export-group input[type=number] {
   width: 100%;
   background: #0d0d0d; border: 1px solid #282828;
@@ -531,6 +545,31 @@ input[type=range]:active::-webkit-slider-thumb { background: #fff; }
 #export-go:disabled { opacity: 0.3; cursor: default; }
 
 .hidden { display: none !important; }
+
+/* ── Pause indicator ───────────────────────────────────────────────────── */
+
+/* ── Save toast ───────────────────────────────────────────────────────── */
+
+.save-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1a1a;
+  color: #ccc;
+  border: 1px solid #333;
+  padding: 8px 20px;
+  border-radius: 6px;
+  z-index: 500;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+}
+.save-toast.show {
+  opacity: 1;
+}
 
 /* ── Pause indicator ───────────────────────────────────────────────────── */
 

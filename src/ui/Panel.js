@@ -2,7 +2,7 @@ import { nodeColor, hexAlpha } from '../utils/color.js';
 import { normA, fmtAngle } from '../utils/math.js';
 import {
   getState, setActiveId, setFlowDir,
-  setFillDensity, setSpeedMult, setGrainSpace, setStretchPct,
+  setFillDensity, setSpeedMult, setGrainSpace, setStretchPct, setParticleColor,
   addNodeAtBestGap, deleteNode, getNodeById,
   linkAnchorToNode, setPlacingAnchor, deleteAnchor, getAnchorById,
   setActiveAnchorId,
@@ -26,6 +26,16 @@ export function closePopover() {
 
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Popover viewport clamping ────────────────────────────────────────────────
+function clampPopoverToViewport(pop) {
+  const rect = pop.getBoundingClientRect();
+  const overflow = rect.bottom - window.innerHeight + 8;
+  if (overflow > 0) {
+    const currentTop = parseFloat(pop.style.top) || 0;
+    pop.style.top = Math.max(8, currentTop - overflow) + 'px';
+  }
 }
 
 // ── Shared row builder ──────────────────────────────────────────────────────
@@ -56,6 +66,7 @@ function openShapePopover(asset, rowEl) {
   const speedVal = state.speedMult.toFixed(1);
   const grainVal = state.grainSpace;
   const trailPct = Math.round(state.stretchPct * 100);
+  const pColor = state.particleColor || '#ffffff';
 
   pop.innerHTML = `
     <div class="pop-header">
@@ -87,10 +98,17 @@ function openShapePopover(asset, rowEl) {
         <div class="sl"><span>Trail</span><span class="sv" id="pop-trail-val">${trailPct}%</span></div>
         <input type="range" id="pop-trail-sl" min="10" max="85" value="${trailPct}" step="1">
       </div>
+
+      <div class="pop-group-label">Colour</div>
+      <div class="gr" style="margin-bottom:0">
+        <input type="color" id="pop-color-picker" value="${pColor}" style="width:28px;height:22px;border:1px solid #333;border-radius:3px;background:none;cursor:pointer;padding:0;flex-shrink:0">
+        <input type="text" class="hex-input" id="pop-color-hex" value="${pColor}" maxlength="7" spellcheck="false">
+      </div>
     </div>
   `;
 
   document.body.appendChild(pop);
+  clampPopoverToViewport(pop);
   bindShapePopoverEvents(pop, asset);
 }
 
@@ -157,6 +175,23 @@ function bindShapePopoverEvents(pop, asset) {
   trailSl.addEventListener('input', () => {
     setStretchPct(+trailSl.value / 100);
     pop.querySelector('#pop-trail-val').textContent = trailSl.value + '%';
+  });
+
+  // Particle color
+  const colorPicker = pop.querySelector('#pop-color-picker');
+  const colorHex = pop.querySelector('#pop-color-hex');
+  colorPicker.addEventListener('pointerdown', () => pushGlobalUndo());
+  colorPicker.addEventListener('input', () => {
+    setParticleColor(colorPicker.value);
+    colorHex.value = colorPicker.value;
+  });
+  colorHex.addEventListener('focus', () => pushGlobalUndo());
+  colorHex.addEventListener('input', () => {
+    const v = colorHex.value;
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+      setParticleColor(v);
+      colorPicker.value = v;
+    }
   });
 }
 
@@ -227,13 +262,13 @@ function openNodePopover(n, idx, rowEl) {
         <input type="range" class="fsl" data-id="${n.id}" min="0" max="100" value="${Math.round(n.fade * 100)}">
       </div>
 
-      <div class="pop-group-label">Anchors</div>
-      ${anchors.map(a => `<label class="al"><input type="checkbox" class="acb" data-node="${n.id}" data-anchor="${a.id}" ${n.linkedAnchors.indexOf(a.id) >= 0 ? 'checked' : ''}> ${escapeHtml(a.name)}</label>`).join('')}
-      <button class="anchor-add" data-node="${n.id}">${placingAnchorForNode === n.id ? 'Click canvas\u2026' : '+ Add Anchor'}</button>
+      ${anchors.length > 0 ? `<div class="pop-group-label">Anchors</div>
+      ${anchors.map(a => `<label class="al"><input type="checkbox" class="acb" data-node="${n.id}" data-anchor="${a.id}" ${n.linkedAnchors.indexOf(a.id) >= 0 ? 'checked' : ''}> ${escapeHtml(a.name)}</label>`).join('')}` : ''}
     </div>
   `;
 
   document.body.appendChild(pop);
+  clampPopoverToViewport(pop);
   bindPopoverNodeEvents(pop, n, flowDir);
 }
 
@@ -363,14 +398,6 @@ function bindPopoverNodeEvents(pop, n, flowDir) {
     });
   });
 
-  // Add Anchor (linked to this node)
-  pop.querySelectorAll('.anchor-add').forEach(btn => {
-    btn.addEventListener('click', () => {
-      setPlacingAnchor(+btn.dataset.node);
-      closePopover();
-      buildPanel();
-    });
-  });
 }
 
 // ── Anchor Popover ───────────────────────────────────────────────────────────
@@ -412,6 +439,7 @@ function openAnchorPopover(a, rowEl) {
   `;
 
   document.body.appendChild(pop);
+  clampPopoverToViewport(pop);
 
   // Push undo before any slider drag
   pop.addEventListener('pointerdown', e => {

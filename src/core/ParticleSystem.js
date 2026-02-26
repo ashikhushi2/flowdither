@@ -313,6 +313,13 @@ export function renderAssetParticles(ctx, w, h) {
   drawParticles(ctx, w, h);
 }
 
+function parseHexColor(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) || 255;
+  const g = parseInt(hex.slice(3, 5), 16) || 255;
+  const b = parseInt(hex.slice(5, 7), 16) || 255;
+  return { r, g, b };
+}
+
 function drawParticles(ctx, w, h) {
   const NUM_BUCKETS = 8;
   const buckets = [];
@@ -345,11 +352,14 @@ function drawParticles(ctx, w, h) {
   const scaleX = w / DW;
   const scaleY = h / DH;
 
+  const state = getState();
+  const { r, g, b: bl } = parseHexColor(state.particleColor || '#ffffff');
+
   for (let b = 0; b < NUM_BUCKETS; b++) {
     const particles = buckets[b];
     if (particles.length === 0) continue;
     const a = (b + 0.5) / NUM_BUCKETS;
-    ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+    ctx.fillStyle = `rgba(${r},${g},${bl},${a.toFixed(3)})`;
     for (let j = 0; j < particles.length; j++) {
       const idx = particles[j];
       ctx.fillRect(px[idx] * scaleX, py[idx] * scaleY, psize[idx] * scaleX, psize[idx] * scaleX);
@@ -357,37 +367,7 @@ function drawParticles(ctx, w, h) {
   }
 }
 
-export function render(ctx, w, h) {
-  if (!shape || count === 0) return;
-
-  const state = getState();
-  const { stretchPct } = state;
-
-  const trailAlpha = 0.05 + (1 - stretchPct) * 0.25;
-  ctx.fillStyle = `rgba(0,0,0,${trailAlpha})`;
-  ctx.fillRect(0, 0, w, h);
-
-  drawParticles(ctx, w, h);
-}
-
-// ── Entry points ────────────────────────────────────────────────────────────
-export function renderFrame() {
-  if (!shape) return;
-  const { dctx } = getCanvasRefs();
-  render(dctx, W, H);
-}
-
-export function renderToCanvas(targetCanvas, resMult, bgColor) {
-  if (!shape) return;
-  const ew = DW * resMult;
-  const eh = DH * resMult;
-  targetCanvas.width = ew;
-  targetCanvas.height = eh;
-  const ectx = targetCanvas.getContext('2d');
-  if (bgColor === 'transparent') ectx.clearRect(0, 0, ew, eh);
-  else { ectx.fillStyle = bgColor || 'black'; ectx.fillRect(0, 0, ew, eh); }
-  render(ectx, ew, eh);
-}
+// (render/renderFrame/renderToCanvas removed — main loop uses clearFrame + renderAssetParticles)
 
 export function reinit() {
   if (!shape) return;

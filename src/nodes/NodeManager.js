@@ -31,6 +31,7 @@ let fillDensity = 0.70;
 let speedMult = 1.0;
 let grainSpace = 9;
 let stretchPct = 0.45;
+let particleColor = '#ffffff';
 
 let shapeRadius = 108; // fixed default (600 * 0.18), doesn't change on resize
 let currentShape = null; // Shape object when using SVG
@@ -40,13 +41,12 @@ let paused = false;
 // Undo/redo
 let undoStack = [];
 let redoStack = [];
-const MAX_UNDO = 50;
 
 // ── Getters ──────────────────────────────────────────────────────────────────
 export function getState() {
   return {
     nodes, activeId, dragState, flowMode, flowDir, linearAng,
-    fillDensity, speedMult, grainSpace, stretchPct, shapeRadius,
+    fillDensity, speedMult, grainSpace, stretchPct, shapeRadius, particleColor,
     currentShape, currentSDF, paused,
     anchors, activeAnchorId, placingAnchorForNode,
   };
@@ -66,6 +66,7 @@ export function setFillDensity(v) { fillDensity = v; }
 export function setSpeedMult(v) { speedMult = v; }
 export function setGrainSpace(v) { grainSpace = v; }
 export function setStretchPct(v) { stretchPct = v; }
+export function setParticleColor(v) { particleColor = v; }
 export function setPaused(v) { paused = v; }
 export function setShapeRadius(r) { shapeRadius = r; }
 export function togglePaused() { paused = !paused; return paused; }
@@ -243,39 +244,7 @@ export function handleDrag(pos) {
 }
 
 // ── Undo/Redo ────────────────────────────────────────────────────────────────
-function captureState() {
-  return { nodes: JSON.parse(JSON.stringify(nodes)), anchors: JSON.parse(JSON.stringify(anchors)) };
-}
-
-export function pushUndo() {
-  undoStack.push(captureState());
-  if (undoStack.length > MAX_UNDO) undoStack.shift();
-  redoStack = [];
-}
-
-export function undo() {
-  if (undoStack.length === 0) return false;
-  redoStack.push(captureState());
-  const prev = undoStack.pop();
-  nodes = prev.nodes;
-  anchors = prev.anchors;
-  nodes.forEach(ensureNodeDefaults);
-  activeId = nodes.length ? nodes[0].id : null;
-  activeAnchorId = null;
-  return true;
-}
-
-export function redo() {
-  if (redoStack.length === 0) return false;
-  undoStack.push(captureState());
-  const next = redoStack.pop();
-  nodes = next.nodes;
-  anchors = next.anchors;
-  nodes.forEach(ensureNodeDefaults);
-  activeId = nodes.length ? nodes[0].id : null;
-  activeAnchorId = null;
-  return true;
-}
+// (Local captureState/pushUndo/undo/redo removed — global undo/redo in ShapeManager.js is used instead)
 
 // ── Ensure node has all required fields (migration helper) ──────────────────
 function ensureNodeDefaults(n) {
@@ -318,15 +287,15 @@ export function translateAnchors(dx, dy) {
 }
 
 // Rotate all nodes (angles + handleAngles) and anchors around (cx, cy)
-export function rotateNodesAndAnchors(angle, cx, cy) {
-  const cos = Math.cos(angle), sin = Math.sin(angle);
+export function rotateNodes(angle) {
   for (const n of nodes) {
-    // Rotate node angular position
     n.angle = normA(n.angle + angle);
-    // Rotate handle direction
     n.handleAngle = normA(n.handleAngle + angle);
   }
-  // Rotate anchor positions around center
+}
+
+export function rotateAnchors(angle, cx, cy) {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
   for (const a of anchors) {
     const dx = a.x - cx, dy = a.y - cy;
     a.x = cx + dx * cos - dy * sin;
@@ -360,12 +329,26 @@ export function linkAnchorToNode(nodeId, anchorId) {
 }
 
 // ── Save/Restore (for file switching) ────────────────────────────────────────
+// Separate anchor save/restore — anchors are global, not per-asset
+export function saveAnchorState() {
+  return {
+    anchors: JSON.parse(JSON.stringify(anchors)),
+    nextAnchorId,
+    activeAnchorId,
+  };
+}
+
+export function restoreAnchorState(snapshot) {
+  if (!snapshot) return;
+  anchors = snapshot.anchors || [];
+  nextAnchorId = snapshot.nextAnchorId || 1;
+  activeAnchorId = snapshot.activeAnchorId || null;
+}
+
 export function saveNodeState() {
   return {
     nodes: JSON.parse(JSON.stringify(nodes)),
-    anchors: JSON.parse(JSON.stringify(anchors)),
     nextNodeId: nextId,
-    nextAnchorId: nextAnchorId,
     flowDir,
     activeNodeId: activeId,
     activeAnchorId,
@@ -375,25 +358,24 @@ export function saveNodeState() {
     speedMult,
     grainSpace,
     stretchPct,
+    particleColor,
     undoStack: JSON.parse(JSON.stringify(undoStack)),
     redoStack: JSON.parse(JSON.stringify(redoStack)),
   };
 }
 
 export function restoreNodeState(snapshot) {
-  nodes = snapshot.nodes;
-  anchors = snapshot.anchors;
+  nodes = snapshot.nodes || [];
   nextId = snapshot.nextNodeId;
-  nextAnchorId = snapshot.nextAnchorId;
   flowDir = snapshot.flowDir;
   activeId = snapshot.activeNodeId;
-  activeAnchorId = snapshot.activeAnchorId;
   flowMode = snapshot.flowMode || 'tangential';
   linearAng = snapshot.linearAng != null ? snapshot.linearAng : -Math.PI / 2;
   fillDensity = snapshot.fillDensity != null ? snapshot.fillDensity : 0.70;
   speedMult = snapshot.speedMult != null ? snapshot.speedMult : 1.0;
   grainSpace = snapshot.grainSpace != null ? snapshot.grainSpace : 9;
   stretchPct = snapshot.stretchPct != null ? snapshot.stretchPct : 0.45;
+  particleColor = snapshot.particleColor || '#ffffff';
   undoStack = snapshot.undoStack || [];
   redoStack = snapshot.redoStack || [];
   placingAnchorForNode = null;
@@ -471,6 +453,7 @@ export function applyPreset(name) {
         speedMult = preset.speedMult;
         grainSpace = preset.grainSpace;
         stretchPct = preset.stretchPct;
+        particleColor = preset.particleColor || '#ffffff';
       }
       break;
     }
@@ -483,7 +466,7 @@ export function saveCustomPreset(name) {
   const presets = loadCustomPresets();
   presets[name] = {
     nodes: JSON.parse(JSON.stringify(nodes)),
-    flowMode, flowDir, linearAng, fillDensity, speedMult, grainSpace, stretchPct,
+    flowMode, flowDir, linearAng, fillDensity, speedMult, grainSpace, stretchPct, particleColor,
   };
   localStorage.setItem('flow-dither-presets', JSON.stringify(presets));
 }
