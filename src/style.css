@@ -112,14 +112,14 @@ html, body {
 
 /* Panel header */
 #panel-header {
-  padding: 20px 16px 16px;
+  padding: 20px 20px 16px;
   border-bottom: 1px solid #222;
 }
 .panel-logo {
-  width: 180px;
+  width: 132px;
   height: auto;
   opacity: 0.7;
-  margin-bottom: 8px;
+  display: block;
 }
 #panel-header h1 {
   font-size: 11px;
@@ -163,18 +163,24 @@ html, body {
 }
 
 .section-add-btn {
-  background: none; border: 1px solid #282828;
-  color: #888; font-family: inherit;
-  font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase;
-  padding: 4px 10px; cursor: pointer; border-radius: 3px;
-  transition: all 0.15s;
+  background: none; border: none;
+  color: #777; font-family: inherit;
+  font-size: 16px; font-weight: 300;
+  padding: 0; cursor: pointer; line-height: 1;
+  transition: color 0.15s;
 }
-.section-add-btn:hover { border-color: #666; color: #ccc; }
-#add-anchor-btn { color: #aa8800; border-color: #3a3000; }
-#add-anchor-btn:hover { border-color: #ffaa00; color: #ffaa00; }
+.section-add-btn:hover { color: #fff; }
+#add-anchor-btn { color: #aa8800; }
+#add-anchor-btn:hover { color: #ffaa00; }
 
 .section-body {
   padding: 0 14px 14px;
+}
+/* Collapse bottom padding when section lists are empty */
+.section-body:has(> #nodes-list:empty),
+.section-body:has(> #anchors-list:empty),
+.section-body:has(> #shapes-list:empty) {
+  padding-bottom: 4px;
 }
 
 /* ── Panel dividers ───────────────────────────────────────────────────── */
@@ -189,15 +195,33 @@ html, body {
 
 #file-input { display: none; }
 
-.dir-btn {
+.dir-btn, .grav-btn {
   flex: 1; background: #111; border: 1px solid #282828;
   color: #777; font-family: inherit;
   font-size: 9px; letter-spacing: 0.15em;
   padding: 7px; cursor: pointer; border-radius: 3px;
   transition: all 0.15s; text-transform: uppercase;
 }
-.dir-btn:hover { border-color: #444; color: #aaa; }
-.dir-btn.active { border-color: #555; color: #ddd; background: #181818; }
+.dir-btn:hover, .grav-btn:hover { border-color: #444; color: #aaa; }
+.dir-btn.active, .grav-btn.active { border-color: #555; color: #ddd; background: #181818; }
+
+.flow-cat-row { display: flex; align-items: center; gap: 10px; }
+.flow-cat-label {
+  font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: #555; cursor: pointer; display: flex; align-items: center; gap: 5px;
+  min-width: 62px; white-space: nowrap;
+  transition: color 0.15s;
+}
+.flow-cat-label.active { color: #ccc; }
+.flow-cat-label input[type="radio"] {
+  appearance: none; -webkit-appearance: none;
+  width: 11px; height: 11px; border: 1px solid #444; border-radius: 50%;
+  background: #111; cursor: pointer; margin: 0; flex-shrink: 0;
+  transition: all 0.15s;
+}
+.flow-cat-label input[type="radio"]:checked { background: #999; border-color: #999; }
+.flow-sub { display: flex; gap: 5px; flex: 1; }
+.flow-sub.disabled .grav-btn { opacity: 0.25; cursor: default; pointer-events: none; }
 
 /* ── Export dropdown ──────────────────────────────────────────────────── */
 
@@ -282,13 +306,9 @@ html, body {
 }
 .ndel:hover { color: #f44; }
 
-/* Empty state */
-#nodes-list:empty::after, #anchors-list:empty::after {
-  content: 'None';
-  display: block;
-  font-size: 9px;
-  color: #444;
-  letter-spacing: 0.1em;
+/* Empty state — collapse padding when list is empty */
+#nodes-list:empty, #anchors-list:empty, #shapes-list:empty {
+  display: none;
 }
 
 /* ── Popover (Figma-style floating panel) ─────────────────────────────── */
@@ -337,30 +357,31 @@ html, body {
 .pop-close:hover { color: #fff; }
 
 .pop-body {
-  padding: 12px 14px 14px;
+  padding: 14px 16px 16px;
 }
 
 .pop-group-label {
-  font-size: 7px;
-  letter-spacing: 0.3em;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #666;
-  margin-bottom: 8px;
-  margin-top: 10px;
-  padding-bottom: 3px;
-  border-bottom: 1px solid #282828;
+  color: #aaa;
+  margin-bottom: 10px;
+  margin-top: 18px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #333;
 }
 .pop-group-label:first-child { margin-top: 0; }
 
 /* Slider rows */
-.sr { margin-bottom: 7px; }
+.sr { margin-bottom: 10px; }
 .sr:last-child { margin-bottom: 0; }
 .sl {
   display: flex; justify-content: space-between;
-  font-size: 9px; color: #999; letter-spacing: 0.08em;
-  margin-bottom: 5px;
+  font-size: 9px; color: #888; letter-spacing: 0.08em;
+  margin-bottom: 6px;
 }
-.sv { color: #bbb; min-width: 40px; text-align: right; }
+.sv { color: #ccc; min-width: 40px; text-align: right; font-weight: 500; }
 
 /* Range inputs */
 input[type=range] {
@@ -432,13 +453,13 @@ input[type=range]:active::-webkit-slider-thumb { background: #fff; }
 /* ── Export / action buttons ──────────────────────────────────────────── */
 
 #export-btn {
-  background: #181818; border: 1px solid #333;
-  color: #999; font-family: inherit;
+  background: #1a1a1a; border: 1px solid #444;
+  color: #bbb; font-family: inherit;
   font-size: 9px; letter-spacing: 0.3em; text-transform: uppercase;
   padding: 9px; cursor: pointer; width: 100%; border-radius: 3px;
   transition: all 0.15s;
 }
-#export-btn:hover { border-color: #666; color: #ddd; }
+#export-btn:hover { border-color: #888; color: #fff; }
 
 .danger-btn {
   color: #c44 !important; border-color: #3a1a1a !important;
@@ -588,4 +609,25 @@ input[type=range]:active::-webkit-slider-thumb { background: #fff; }
   border: 1px solid #333;
   z-index: 50;
   pointer-events: none;
+}
+
+/* ── [SHAPE-TOOLS] Shape creation popover ────────────────────────────── */
+
+.shape-create-popover {
+  position: fixed; z-index: 30; background: #1a1a1a;
+  border: 1px solid #333; border-radius: 6px; padding: 4px 0;
+  min-width: 180px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.shape-create-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; cursor: pointer; color: #aaa; font-size: 11px;
+}
+.shape-create-row:hover { background: #252525; color: #fff; }
+.shape-create-row .poly-sides {
+  width: 36px; background: #111; border: 1px solid #333; color: #ccc;
+  text-align: center; border-radius: 3px; font-size: 11px;
+  font-family: inherit; padding: 2px;
+}
+#overlay-canvas.pen-tool {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z' fill='white'/%3E%3C/svg%3E") 2 22, crosshair;
 }

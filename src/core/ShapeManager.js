@@ -3,7 +3,7 @@ import { createParticleSnapshot, loadFromSnapshot, saveToSnapshot } from './Part
 import { DistanceField } from './DistanceField.js';
 import { Shape } from './ShapeParser.js';
 
-const MAX_PER_ASSET = 2000;
+const MAX_PER_ASSET = 5000;
 
 let assets = [];
 let selectedAssetId = null;
@@ -22,6 +22,7 @@ export function addAsset(shape, sdf, name) {
     sdf,
     nodeState: null,  // will be populated on first save or by caller
     particles,
+    flowMode: 'edge', // [CENTER-MODE] 'edge' (default) or 'center'
   };
   assets.push(asset);
   return asset;
@@ -113,6 +114,7 @@ export function saveAllState() {
         shape: clonedShape,
         sdf: clonedSdf,
         nodeState: clonedNodeState,
+        flowMode: a.flowMode || 'edge', // [CENTER-MODE]
         particles: {
           px: a.particles.px.slice(),
           py: a.particles.py.slice(),
@@ -152,6 +154,7 @@ export function restoreAllState(snapshot) {
     shape: a.shape,
     sdf: a.sdf,
     nodeState: a.nodeState,
+    flowMode: a.flowMode || 'edge', // [CENTER-MODE]
     particles: {
       px: new Float32Array(a.particles.px),
       py: new Float32Array(a.particles.py),
@@ -243,6 +246,7 @@ export function duplicateAsset(id, dx = 20, dy = 20) {
     sdf: clonedSdf,
     nodeState: clonedNodeState,
     particles: clonedParticles,
+    flowMode: src.flowMode || 'edge', // [CENTER-MODE]
   };
   assets.push(newAsset);
   return newAsset;
@@ -292,6 +296,7 @@ export function serializeState() {
         shape: srcShape ? srcShape.toJSON() : null,
         nodeState: ns,
         particles: sp,
+        flowMode: a.flowMode || 'edge', // [CENTER-MODE]
       };
     }),
     selectedAssetId,
@@ -336,7 +341,7 @@ export function deserializeState(data) {
     for (const k of UINT8_FIELDS) particles[k] = new Uint8Array(sp[k] || maxCount);
     for (const k of INT16_FIELDS) particles[k] = new Int16Array(sp[k] || maxCount);
 
-    return { id: a.id, name: a.name, shape, sdf, nodeState, particles };
+    return { id: a.id, name: a.name, shape, sdf, nodeState, particles, flowMode: a.flowMode || 'edge' };
   });
 
   selectedAssetId = data.selectedAssetId;

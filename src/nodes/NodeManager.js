@@ -32,6 +32,9 @@ let speedMult = 1.0;
 let grainSpace = 9;
 let stretchPct = 0.45;
 let particleColor = '#ffffff';
+let flowCategory = 'spiral'; // 'spiral' or 'radial' — only one active at a time
+let spiralMode = 'edge';    // 'edge' = spiral toward boundary (default), 'center' = TODO
+let radialMode = 'edge';    // 'edge' = radial outward to boundary, 'center' = radial inward to center
 
 let shapeRadius = 108; // fixed default (600 * 0.18), doesn't change on resize
 let currentShape = null; // Shape object when using SVG
@@ -46,7 +49,7 @@ let redoStack = [];
 export function getState() {
   return {
     nodes, activeId, dragState, flowMode, flowDir, linearAng,
-    fillDensity, speedMult, grainSpace, stretchPct, shapeRadius, particleColor,
+    fillDensity, speedMult, grainSpace, stretchPct, shapeRadius, particleColor, flowCategory, spiralMode, radialMode,
     currentShape, currentSDF, paused,
     anchors, activeAnchorId, placingAnchorForNode,
   };
@@ -67,6 +70,9 @@ export function setSpeedMult(v) { speedMult = v; }
 export function setGrainSpace(v) { grainSpace = v; }
 export function setStretchPct(v) { stretchPct = v; }
 export function setParticleColor(v) { particleColor = v; }
+export function setFlowCategory(v) { flowCategory = v; }
+export function setSpiralMode(v) { spiralMode = v; }
+export function setRadialMode(v) { radialMode = v; }
 export function setPaused(v) { paused = v; }
 export function setShapeRadius(r) { shapeRadius = r; }
 export function togglePaused() { paused = !paused; return paused; }
@@ -359,6 +365,7 @@ export function saveNodeState() {
     grainSpace,
     stretchPct,
     particleColor,
+    flowCategory, spiralMode, radialMode,
     undoStack: JSON.parse(JSON.stringify(undoStack)),
     redoStack: JSON.parse(JSON.stringify(redoStack)),
   };
@@ -376,6 +383,10 @@ export function restoreNodeState(snapshot) {
   grainSpace = snapshot.grainSpace != null ? snapshot.grainSpace : 9;
   stretchPct = snapshot.stretchPct != null ? snapshot.stretchPct : 0.45;
   particleColor = snapshot.particleColor || '#ffffff';
+  // Migrate old gravityMode → radialMode
+  flowCategory = snapshot.flowCategory || 'spiral';
+  spiralMode = snapshot.spiralMode || 'edge';
+  radialMode = snapshot.radialMode || snapshot.gravityMode || 'edge';
   undoStack = snapshot.undoStack || [];
   redoStack = snapshot.redoStack || [];
   placingAnchorForNode = null;
@@ -454,6 +465,9 @@ export function applyPreset(name) {
         grainSpace = preset.grainSpace;
         stretchPct = preset.stretchPct;
         particleColor = preset.particleColor || '#ffffff';
+        flowCategory = preset.flowCategory || 'spiral';
+        spiralMode = preset.spiralMode || 'edge';
+        radialMode = preset.radialMode || preset.gravityMode || 'edge';
       }
       break;
     }
@@ -466,7 +480,7 @@ export function saveCustomPreset(name) {
   const presets = loadCustomPresets();
   presets[name] = {
     nodes: JSON.parse(JSON.stringify(nodes)),
-    flowMode, flowDir, linearAng, fillDensity, speedMult, grainSpace, stretchPct, particleColor,
+    flowMode, flowDir, linearAng, fillDensity, speedMult, grainSpace, stretchPct, particleColor, flowCategory, spiralMode, radialMode,
   };
   localStorage.setItem('flow-dither-presets', JSON.stringify(presets));
 }

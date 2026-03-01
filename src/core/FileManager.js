@@ -1,11 +1,11 @@
 import { DW, DH, setCanvasDimensions, resizeCanvasElements, getCanvasRefs, W, H } from '../utils/canvas.js';
-import { restoreNodeState, getState, setFillDensity, setSpeedMult, setGrainSpace, setStretchPct, setFlowDir, setShape, saveNodeStateWithShape } from '../nodes/NodeManager.js';
+import { restoreNodeState, restoreAnchorState, getState, setFillDensity, setSpeedMult, setGrainSpace, setStretchPct, setFlowDir, setShape, clearShape, saveNodeStateWithShape } from '../nodes/NodeManager.js';
 import { init as initParticles, reinit as reinitParticles, saveToSnapshot } from './ParticleSystem.js';
 import { createCircleShape } from './ShapeParser.js';
 import { DistanceField } from './DistanceField.js';
 import {
   saveAllState, restoreAllState, getBgColor, setBgColor,
-  addAsset, selectAsset, getSelectedAssetId,
+  addAsset, selectAsset, getSelectedAssetId, deselectAll,
   serializeState, deserializeState,
 } from './ShapeManager.js';
 
@@ -129,10 +129,8 @@ function activateFile(id) {
 }
 
 function initFreshFile(file) {
-  const defaultShape = createCircleShape(108);
-  const defaultSdf = new DistanceField(defaultShape);
-  defaultSdf.compute();
-  setShape(defaultShape, defaultSdf);
+  // Start completely blank — no shapes, no nodes, no anchors
+  clearShape();
 
   // Reset global slider values to defaults
   setFillDensity(0.70);
@@ -141,7 +139,7 @@ function initFreshFile(file) {
   setStretchPct(0.45);
   setFlowDir(1);
 
-  // Reset node state
+  // Reset node state to empty
   restoreNodeState({
     nodes: [
       { id: 1, name: 'Node 1', angle: -Math.PI * 0.6, handleAngle: -Math.PI * 0.6 - Math.PI / 2, bleed: 0, spread: 1.2, t: 0,
@@ -163,19 +161,11 @@ function initFreshFile(file) {
     redoStack: [],
   });
 
-  // Create asset via ShapeManager
-  const asset = addAsset(defaultShape, defaultSdf, 'Circle');
+  // Reset anchors
+  restoreAnchorState({ anchors: [], nextAnchorId: 1, activeAnchorId: null });
 
-  // Init particles
-  const state = getState();
-  const cnt = Math.min(Math.round(500 + state.fillDensity * 4500), 2000);
-  initParticles(defaultShape, defaultSdf, cnt);
-
-  // Save into asset
-  asset.nodeState = saveNodeStateWithShape();
-  saveToSnapshot(asset.particles);
-
-  selectAsset(asset.id);
+  // No assets — user adds shapes manually
+  deselectAll();
   setBgColor('#000000');
 }
 
@@ -276,6 +266,7 @@ export function importProject(data) {
 export function autoSaveToLocalStorage() {
   try {
     const data = exportProject();
+    data._blankStart = true; // Mark as new-version autosave
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(data));
   } catch (e) {
     // Silently fail — localStorage may be full or unavailable
@@ -287,11 +278,21 @@ export function loadAutoSave() {
     const raw = localStorage.getItem(AUTOSAVE_KEY);
     if (!raw) return false;
     const data = JSON.parse(raw);
-    importProject(data);
-    return true;
+    // Skip autosave from older versions that started with default shapes
+    if (data._blankStart) {
+      importProject(data);
+      return true;
+    }
+    // Old autosave without blank-start flag — discard it
+    localStorage.removeItem(AUTOSAVE_KEY);
+    return false;
   } catch (e) {
     // Corrupt autosave — remove it
     localStorage.removeItem(AUTOSAVE_KEY);
     return false;
   }
+}
+
+export function clearAutoSave() {
+  localStorage.removeItem(AUTOSAVE_KEY);
 }

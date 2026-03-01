@@ -2,6 +2,7 @@ import { SCALE, CX, CY, W, H, getCanvasRefs } from '../utils/canvas.js';
 import { nodeColor, hexAlpha } from '../utils/color.js';
 import { getState, nPos, hPos, getAnchorById } from './NodeManager.js';
 import { getAllAssets, getSelectedAssetId } from '../core/ShapeManager.js';
+import { getPenToolState, getBboxHandlePositions, getVertexPositions } from '../main.js';
 
 const S = SCALE;
 
@@ -38,14 +39,43 @@ export function renderOverlay(shapeTransform) {
     }
   }
 
+  // [SHAPE-TOOLS] Vertex drag preview — lightweight outline only
+  if (shapeTransform?.vertexPreview) {
+    const verts = shapeTransform.vertexPreview;
+    const activeIdx = shapeTransform.vertexIndex;
+    // Draw polygon outline from preview vertices
+    octx.beginPath();
+    for (let i = 0; i < verts.length; i++) {
+      if (i === 0) octx.moveTo(verts[i].x * S, verts[i].y * S);
+      else octx.lineTo(verts[i].x * S, verts[i].y * S);
+    }
+    octx.closePath();
+    octx.strokeStyle = '#555';
+    octx.lineWidth = 2;
+    octx.stroke();
+    // Draw vertex circles
+    for (let i = 0; i < verts.length; i++) {
+      octx.beginPath();
+      octx.arc(verts[i].x * S, verts[i].y * S, 5, 0, Math.PI * 2);
+      octx.fillStyle = i === activeIdx ? '#fff' : 'rgba(255,255,255,0.8)';
+      octx.fill();
+      octx.strokeStyle = 'rgba(0,0,0,0.5)';
+      octx.lineWidth = 1;
+      octx.stroke();
+    }
+    return;
+  }
+
   // Apply visual transform during shape drag/slider preview (for selected asset only)
   const hasTransform = shapeTransform != null;
   if (hasTransform) {
-    const { dx = 0, dy = 0, scale = 1, rotate = 0, cx = 0, cy = 0 } = shapeTransform;
+    const { dx = 0, dy = 0, scale = 1, scaleX, scaleY, rotate = 0, cx = 0, cy = 0 } = shapeTransform;
+    const sx = scaleX || scale || 1;
+    const sy = scaleY || scale || 1;
     octx.save();
     octx.translate(cx * S, cy * S);
     octx.rotate(rotate);
-    octx.scale(scale, scale);
+    octx.scale(sx, sy);
     octx.translate(-cx * S, -cy * S);
     octx.translate(dx * S, dy * S);
   }
@@ -54,7 +84,7 @@ export function renderOverlay(shapeTransform) {
   if (selId !== null) {
     if (currentShape) {
       drawShapeOutline(octx, currentShape, '#555', 2);
-    } else {
+    } else if (getAllAssets().length > 0) {
       octx.beginPath();
       octx.arc(CX * S, CY * S, shapeRadius * S, 0, Math.PI * 2);
       octx.strokeStyle = '#555';
@@ -65,7 +95,7 @@ export function renderOverlay(shapeTransform) {
     // No selection — still draw current shape outline if any
     if (currentShape) {
       drawShapeOutline(octx, currentShape, '#2a2a2a', 1.5);
-    } else {
+    } else if (getAllAssets().length > 0) {
       octx.beginPath();
       octx.arc(CX * S, CY * S, shapeRadius * S, 0, Math.PI * 2);
       octx.strokeStyle = '#2a2a2a';
@@ -75,8 +105,14 @@ export function renderOverlay(shapeTransform) {
   }
 
   // Only draw nodes/anchors/flow indicator for selected asset
-  if (selId === null) {
+  // When pen tool is active, skip heavy node/anchor rendering entirely
+  const penState = getPenToolState();
+  if (selId === null || penState.active) {
     if (hasTransform) octx.restore();
+    // Jump straight to pen tool preview if active
+    if (penState.active) {
+      _drawPenPreview(octx, penState);
+    }
     return;
   }
 
@@ -307,5 +343,96 @@ export function renderOverlay(shapeTransform) {
   // Restore after shape transform
   if (hasTransform) {
     octx.restore();
+  }
+
+  // [SHAPE-TOOLS] Bbox handles (drawn after transform restore, in screen space)
+  if (selId !== null && currentShape && !hasTransform) {
+    const b = currentShape.bounds;
+    const handles = getBboxHandlePositions(b);
+    for (const h of handles) {
+      octx.fillStyle = '#fff';
+      octx.fillRect(h.x * S - 3, h.y * S - 3, 6, 6);
+      octx.strokeStyle = 'rgba(0,0,0,0.5)';
+      octx.lineWidth = 1;
+      octx.strokeRect(h.x * S - 3, h.y * S - 3, 6, 6);
+    }
+    // Vertex handles (circles) — drawn on top of bbox squares
+    const verts = getVertexPositions();
+    if (verts) {
+      for (const v of verts) {
+        octx.beginPath();
+        octx.arc(v.x * S, v.y * S, 5, 0, Math.PI * 2);
+        octx.fillStyle = '#fff';
+        octx.fill();
+        octx.strokeStyle = 'rgba(0,0,0,0.5)';
+        octx.lineWidth = 1;
+        octx.stroke();
+      }
+    }
+  }
+
+  // [SHAPE-TOOLS] Pen tool preview (drawn after everything else)
+  if (penState.active) {
+    _drawPenPreview(octx, penState);
+  }
+}
+
+function _drawPenPreview(octx, penState) {
+  const pts = penState.points;
+  // Draw lines between consecutive points
+  if (pts.length > 0) {
+    octx.beginPath();
+    octx.moveTo(pts[0].x * S, pts[0].y * S);
+    for (let i = 1; i < pts.length; i++) {
+      octx.lineTo(pts[i].x * S, pts[i].y * S);
+    }
+    octx.strokeStyle = 'rgba(255,255,255,0.6)';
+    octx.lineWidth = 1;
+    octx.stroke();
+
+    // Dashed preview line from last point to cursor
+    if (penState.cursor) {
+      octx.beginPath();
+      octx.moveTo(pts[pts.length - 1].x * S, pts[pts.length - 1].y * S);
+      octx.lineTo(penState.cursor.x * S, penState.cursor.y * S);
+      octx.setLineDash([4, 4]);
+      octx.strokeStyle = 'rgba(255,255,255,0.4)';
+      octx.lineWidth = 1;
+      octx.stroke();
+      octx.setLineDash([]);
+    }
+  }
+
+  // Snap-to-close indicator: highlight ring + dashed closing line
+  if (penState.snapClose && pts.length >= 2) {
+    // Highlight ring around first point
+    octx.beginPath();
+    octx.arc(pts[0].x * S, pts[0].y * S, 8, 0, Math.PI * 2);
+    octx.fillStyle = 'rgba(255,255,255,0.15)';
+    octx.fill();
+    octx.strokeStyle = 'rgba(255,255,255,0.5)';
+    octx.lineWidth = 1.5;
+    octx.stroke();
+
+    // Dashed closing line from last point to first point
+    octx.beginPath();
+    octx.moveTo(pts[pts.length - 1].x * S, pts[pts.length - 1].y * S);
+    octx.lineTo(pts[0].x * S, pts[0].y * S);
+    octx.setLineDash([4, 4]);
+    octx.strokeStyle = 'rgba(255,255,255,0.5)';
+    octx.lineWidth = 1;
+    octx.stroke();
+    octx.setLineDash([]);
+  }
+
+  // Draw placed points as circles
+  for (const p of pts) {
+    octx.beginPath();
+    octx.arc(p.x * S, p.y * S, 4, 0, Math.PI * 2);
+    octx.fillStyle = '#fff';
+    octx.fill();
+    octx.strokeStyle = 'rgba(0,0,0,0.5)';
+    octx.lineWidth = 1;
+    octx.stroke();
   }
 }

@@ -27,34 +27,9 @@ let shape = null;
 let sdf = null;
 
 // ── Spawn ───────────────────────────────────────────────────────────────────
-function spawnParticle(i) {
-  const b = shape.bounds;
-  const w = b.maxX - b.minX;
-  const h = b.maxY - b.minY;
 
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const x = b.minX + Math.random() * w;
-    const y = b.minY + Math.random() * h;
-    if (shape.isPointInside(x, y)) {
-      px[i] = x;  py[i] = y;
-      pvx[i] = 0; pvy[i] = 0;
-      plife[i] = 200 + Math.random() * 300;
-      pmaxLife[i] = plife[i];
-      psize[i] = 1 + Math.random();
-      pescInf[i] = 0;
-      pfade[i] = 1;
-      pdetach[i] = 0;
-      pdirX[i] = 0; pdirY[i] = 0;
-      pSpeed[i] = 0; pSLen[i] = 0;
-      pDetachT[i] = 0;
-      pSourceNode[i] = -1;
-      return;
-    }
-  }
-
-  const idx = Math.floor(Math.random() * shape.numPoints);
-  px[i] = shape.points[idx].x;
-  py[i] = shape.points[idx].y;
+// [CENTER-MODE] Helper: reset particle fields to defaults
+function resetParticleFields(i) {
   pvx[i] = 0; pvy[i] = 0;
   plife[i] = 200 + Math.random() * 300;
   pmaxLife[i] = plife[i];
@@ -68,14 +43,89 @@ function spawnParticle(i) {
   pSourceNode[i] = -1;
 }
 
+// [CENTER-MODE] Spawn particle near shape boundary (for inward flow)
+function spawnAtBoundary(i) {
+  const idx = Math.floor(Math.random() * shape.numPoints);
+  const bp = shape.points[idx];
+  const norm = shape.normals[idx];
+  // Slightly inside the boundary (inset by 2-6px along inward normal)
+  const inset = 2 + Math.random() * 4;
+  px[i] = bp.x - norm.x * inset;
+  py[i] = bp.y - norm.y * inset;
+  resetParticleFields(i);
+  // pfade set to 1 (full) — distance-based fade in update() handles visibility
+}
+
+function spawnParticle(i) {
+  const b = shape.bounds;
+  const w = b.maxX - b.minX;
+  const h = b.maxY - b.minY;
+  const state = getState();
+  const isSpiralCenter = state.flowCategory === 'spiral' && state.spiralMode === 'center';
+  const isRadial = state.flowCategory === 'radial';
+
+  // [RADIAL / SPIRAL-CENTER] Spawn across entire area — velocity field creates density gradient
+  if (isSpiralCenter || isRadial) {
+    spawnAtRandomRadius(i);
+    return;
+  }
+
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const x = b.minX + Math.random() * w;
+    const y = b.minY + Math.random() * h;
+    if (shape.isPointInside(x, y)) {
+      px[i] = x;  py[i] = y;
+      resetParticleFields(i);
+      return;
+    }
+  }
+
+  const idx = Math.floor(Math.random() * shape.numPoints);
+  px[i] = shape.points[idx].x;
+  py[i] = shape.points[idx].y;
+  resetParticleFields(i);
+}
+
+// [CENTER/RADIAL MODES] Spawn particle randomly inside the actual shape geometry
+function spawnAtRandomRadius(i) {
+  const b = shape.bounds;
+  const w = b.maxX - b.minX;
+  const h = b.maxY - b.minY;
+  // Try random points inside the shape — works for any shape including SVGs
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const x = b.minX + Math.random() * w;
+    const y = b.minY + Math.random() * h;
+    if (shape.isPointInside(x, y)) {
+      px[i] = x;
+      py[i] = y;
+      resetParticleFields(i);
+      return;
+    }
+  }
+  // Fallback: spawn at a boundary point
+  const idx = Math.floor(Math.random() * shape.numPoints);
+  px[i] = shape.points[idx].x;
+  py[i] = shape.points[idx].y;
+  resetParticleFields(i);
+}
+
 // ── Init ────────────────────────────────────────────────────────────────────
 export function init(newShape, newSdf, particleCount) {
   shape = newShape;
   sdf = newSdf;
   count = Math.min(particleCount, MAX_PARTICLES);
 
+  const state = getState();
+  const isSpiralCenter = state.flowCategory === 'spiral' && state.spiralMode === 'center';
+  const isRadial = state.flowCategory === 'radial';
+
   for (let i = 0; i < count; i++) {
-    spawnParticle(i);
+    if (isSpiralCenter || isRadial) {
+      // Pre-fill entire radius — steady-state, no empty regions
+      spawnAtRandomRadius(i);
+    } else {
+      spawnParticle(i);
+    }
     plife[i] = Math.random() * pmaxLife[i];
   }
 }
@@ -85,10 +135,23 @@ export function update(dt) {
   if (!shape || !sdf || count === 0) return;
 
   const state = getState();
-  const { nodes, flowDir, speedMult, grainSpace } = state;
+  const { nodes, flowDir, speedMult, grainSpace, flowCategory, radialMode, currentShape } = state;
 
   const baseSpeed = 30 * speedMult;
   const gravityK = 0.3;
+  const isRadial = flowCategory === 'radial';
+  const radialCenter = isRadial && radialMode === 'center';   // radial inward to center
+  const radialEdgeMode = isRadial && radialMode === 'edge';   // radial outward to edge
+  const spiralCenter = flowCategory === 'spiral' && state.spiralMode === 'center'; // spiral inward to center
+
+  // Shape center + radius for radial modes
+  let shapeCX = 0, shapeCY = 0, shapeR = 1;
+  if (currentShape) {
+    const b = currentShape.bounds;
+    shapeCX = (b.minX + b.maxX) / 2;
+    shapeCY = (b.minY + b.maxY) / 2;
+    shapeR = Math.max((b.maxX - b.minX), (b.maxY - b.minY)) / 2 || 1;
+  }
   const grainAmp = Math.max(0.1, 20 - grainSpace) * 0.15;
 
   for (let i = 0; i < count; i++) {
@@ -182,82 +245,205 @@ export function update(dt) {
     // ═══════════════════════════════════════════════════════════════════════
     let esc = pescInf[i];
 
-    // 1. Nearest path point
-    const info = sdf.getNearestBoundaryInfo(x, y);
-    const tangent = info.tangent;
-    const nearest = info.point;
-    const dist = info.distance;
+    // 2. Path tangent flow + 3. Gravity
+    // SDF-based normalized radius: works for ANY shape (circles, ellipses, SVGs, polygons)
+    // r = cdist / (cdist + |sdfDist|) → 0 at center, 1 at boundary
+    if (radialEdgeMode) {
+      // ── [RADIAL-EDGE] Radial outward flow — exact mirror of radial-center ──
+      const fromCX = x - shapeCX, fromCY = y - shapeCY;
+      const cdist = Math.sqrt(fromCX * fromCX + fromCY * fromCY) || 0.01;
+      const sd = sdf.sample(x, y);
+      const absSd = Math.abs(sd);
+      const normalizedDist = Math.min(cdist / (cdist + absSd + 0.01), 1);
 
-    // 2. Path tangent flow
-    vx = tangent.x * baseSpeed * flowDir;
-    vy = tangent.y * baseSpeed * flowDir;
+      // Outward push with speed floor: fast at center, slow at edge
+      const edgeDist = 1 - normalizedDist; // 1=center, 0=edge
+      const speedScale = (0.35 + 0.65 * edgeDist) * baseSpeed * 1.2;
+      const radX = fromCX / cdist, radY = fromCY / cdist;
+      const vx_radial = radX * speedScale;
+      const vy_radial = radY * speedScale;
 
-    // 3. Gravity toward path
-    const gx = nearest.x - x;
-    const gy = nearest.y - y;
-    const gStrength = gravityK * Math.min(dist * 0.05, 1.0);
-    vx += gx * gStrength;
-    vy += gy * gStrength;
+      // Tangential swirl (perpendicular, decreases near edge)
+      const orbX = -radY * flowDir, orbY = radX * flowDir;
+      const swirlStrength = edgeDist * edgeDist * baseSpeed * 0.3;
+      const vx_swirl = orbX * swirlStrength;
+      const vy_swirl = orbY * swirlStrength;
+
+      // Blend: radial push dominates, swirl secondary
+      vx = vx_radial * 0.85 + vx_swirl * 0.15;
+      vy = vy_radial * 0.85 + vy_swirl * 0.15;
+
+      // Opacity: full at center, fades near edge
+      pfade[i] = Math.min(1, edgeDist * 1.5);
+
+    } else if (radialCenter) {
+      // ── [RADIAL-CENTER] Radial inward flow ──
+      const toCX = shapeCX - x, toCY = shapeCY - y;
+      const cdist = Math.sqrt(toCX * toCX + toCY * toCY) || 0.01;
+      const sd = sdf.sample(x, y);
+      const absSd = Math.abs(sd);
+      const normalizedDist = Math.min(cdist / (cdist + absSd + 0.01), 1);
+
+      // Inward pull with speed floor
+      const speedScale = (0.35 + 0.65 * normalizedDist) * baseSpeed * 1.2;
+      const radX = toCX / cdist, radY = toCY / cdist;
+      const vx_radial = radX * speedScale;
+      const vy_radial = radY * speedScale;
+
+      // Tangential swirl (perpendicular to radial, decreases near center)
+      const orbX = -radY * flowDir, orbY = radX * flowDir;
+      const swirlStrength = normalizedDist * normalizedDist * baseSpeed * 0.3;
+      const vx_swirl = orbX * swirlStrength;
+      const vy_swirl = orbY * swirlStrength;
+
+      // Blend: radial pull dominates, swirl secondary
+      vx = vx_radial * 0.85 + vx_swirl * 0.15;
+      vy = vy_radial * 0.85 + vy_swirl * 0.15;
+
+      // Opacity: full at edge, fades near center
+      pfade[i] = Math.min(1, normalizedDist * 1.5);
+
+    } else if (spiralCenter) {
+      // ── [SPIRAL-CENTER] Pure velocity field — no forces, no accumulation ──
+      // Velocity is computed directly from position each frame.
+
+      // Step 1: direction to center + SDF-based normalized radius (works for any shape)
+      const toCX = shapeCX - x, toCY = shapeCY - y;
+      const cdist = Math.sqrt(toCX * toCX + toCY * toCY) || 0.01;
+      const sd = sdf.sample(x, y);
+      const absSd = Math.abs(sd);
+      const r = Math.min(cdist / (cdist + absSd + 0.01), 1); // 0=center, 1=edge
+      const inX = toCX / cdist, inY = toCY / cdist; // unit inward
+
+      // Step 2: tangent = perpendicular of inward vector
+      const tanX = -inY * flowDir, tanY = inX * flowDir;
+
+      // Step 3: blend — at edge mostly orbit, at center mostly inward
+      const blendX = tanX * r + inX * (1 - r);
+      const blendY = tanY * r + inY * (1 - r);
+
+      // Step 4: normalize direction
+      const blen = Math.sqrt(blendX * blendX + blendY * blendY) || 1;
+      const dirX = blendX / blen, dirY = blendY / blen;
+
+      // Step 5: speed falloff — fast at edge, slow at center
+      // Floor of 0.35 prevents near-zero speed at center (avoids extreme accumulation)
+      const speed = baseSpeed * (0.35 + 0.65 * r);
+
+      // Step 6: set velocity directly (no accumulation)
+      vx = dirX * speed;
+      vy = dirY * speed;
+
+      // Opacity: full at edge, fades near center
+      pfade[i] = Math.min(1, r * 1.5);
+
+    } else {
+      // ── Spiral edge (default): tangent + gravity + nodes ──
+      const info = sdf.getNearestBoundaryInfo(x, y);
+      const tangent = info.tangent;
+      const nearest = info.point;
+      const dist = info.distance;
+
+      vx = tangent.x * baseSpeed * flowDir;
+      vy = tangent.y * baseSpeed * flowDir;
+
+      const gx = nearest.x - x;
+      const gy = nearest.y - y;
+      // Original boundary gravity — creates the outward spiral drift
+      const gStrength = gravityK * Math.min(dist * 0.05, 1.0);
+      vx += gx * gStrength;
+      vy += gy * gStrength;
+    }
 
     // 4. Flow stream node influence
-    for (let ni = 0; ni < nodes.length; ni++) {
-      const n = nodes[ni];
-      if (n.bleed < 0.01) continue;
+    if (radialCenter || radialEdgeMode || spiralCenter) {
+      // [RADIAL/CENTER MODES] Nodes add tangential swirl only — no detachment, no escape
+      for (let ni = 0; ni < nodes.length; ni++) {
+        const n = nodes[ni];
+        if (n.bleed < 0.01) continue;
 
-      const np = nPos(n);
-      const ndx = np.x - x;
-      const ndy = np.y - y;
-      const ndist = Math.sqrt(ndx * ndx + ndy * ndy);
+        const np = nPos(n);
+        const ndx = np.x - x;
+        const ndy = np.y - y;
+        const ndist = Math.sqrt(ndx * ndx + ndy * ndy);
 
-      const influenceR = n.spread * 80;
-      if (ndist >= influenceR || ndist < 0.1) continue;
+        const influenceR = n.spread * 80;
+        if (ndist >= influenceR || ndist < 0.1) continue;
 
-      const proximity = 1 - ndist / influenceR;
-      const influence = proximity * proximity;
+        const proximity = 1 - ndist / influenceR;
+        const influence = proximity * proximity;
 
-      // Grow escape influence
-      esc += 0.03 * influence;
-      if (esc > 1) esc = 1;
-
-      const curSpeed = Math.sqrt(vx * vx + vy * vy) || 1;
-      const hcos = Math.cos(n.handleAngle);
-      const hsin = Math.sin(n.handleAngle);
-
-      // Rotate velocity toward node direction
-      const rotateStrength = influence * n.directionStrength;
-      let newVx = vx + (hcos * curSpeed - vx) * rotateStrength;
-      let newVy = vy + (hsin * curSpeed - vy) * rotateStrength;
-      const newSpeed = Math.sqrt(newVx * newVx + newVy * newVy) || 1;
-      vx = newVx / newSpeed * curSpeed;
-      vy = newVy / newSpeed * curSpeed;
-
-      // Accelerate once aligned
-      const alignment = (vx * hcos + vy * hsin) / curSpeed;
-      if (alignment > 0.3) {
-        const accel = (alignment - 0.3) * influence * n.pull * 5.0 * (1 + n.streamLength * 1.5);
-        vx += hcos * accel * baseSpeed;
-        vy += hsin * accel * baseSpeed;
+        // [RADIAL-CENTER] Add tangential swirl from node handle direction
+        const curSpeed = Math.sqrt(vx * vx + vy * vy) || 1;
+        const hcos = Math.cos(n.handleAngle);
+        const hsin = Math.sin(n.handleAngle);
+        const swirlAmt = influence * n.directionStrength * 0.3;
+        vx += (hcos * curSpeed - vx) * swirlAmt;
+        vy += (hsin * curSpeed - vy) * swirlAmt;
+        const ns = Math.sqrt(vx * vx + vy * vy) || 1;
+        vx = vx / ns * curSpeed;
+        vy = vy / ns * curSpeed;
       }
+    } else {
+      // ── Spiral/radial edge: full node influence with detachment ──
+      for (let ni = 0; ni < nodes.length; ni++) {
+        const n = nodes[ni];
+        if (n.bleed < 0.01) continue;
 
-      // Bleed stretch
-      if (n.bleed > 0.01) {
-        const bleedAccel = n.bleed * influence * n.stretch * 4.0 * (1 + n.streamLength * 1.5);
-        vx += hcos * bleedAccel * baseSpeed;
-        vy += hsin * bleedAccel * baseSpeed;
-      }
+        const np = nPos(n);
+        const ndx = np.x - x;
+        const ndy = np.y - y;
+        const ndist = Math.sqrt(ndx * ndx + ndy * ndy);
 
-      // ── DETACHMENT TRIGGER ──
-      // When influence is strong enough, lock direction and go ballistic
-      if (influence > 0.2 && esc > 0.15) {
-        const speed = Math.sqrt(vx * vx + vy * vy) || 1;
-        pdetach[i] = 1;
-        pdirX[i] = vx / speed;
-        pdirY[i] = vy / speed;
-        pSpeed[i] = speed;
-        pSLen[i] = n.streamLength;
-        pDetachT[i] = 0;
-        pfade[i] = 1;
-        pSourceNode[i] = n.id;
+        const influenceR = n.spread * 80;
+        if (ndist >= influenceR || ndist < 0.1) continue;
+
+        const proximity = 1 - ndist / influenceR;
+        const influence = proximity * proximity;
+
+        // Grow escape influence
+        esc += 0.03 * influence;
+        if (esc > 1) esc = 1;
+
+        const curSpeed = Math.sqrt(vx * vx + vy * vy) || 1;
+        const hcos = Math.cos(n.handleAngle);
+        const hsin = Math.sin(n.handleAngle);
+
+        // Rotate velocity toward node direction
+        const rotateStrength = influence * n.directionStrength;
+        let newVx = vx + (hcos * curSpeed - vx) * rotateStrength;
+        let newVy = vy + (hsin * curSpeed - vy) * rotateStrength;
+        const newSpeed = Math.sqrt(newVx * newVx + newVy * newVy) || 1;
+        vx = newVx / newSpeed * curSpeed;
+        vy = newVy / newSpeed * curSpeed;
+
+        // Accelerate once aligned
+        const alignment = (vx * hcos + vy * hsin) / curSpeed;
+        if (alignment > 0.3) {
+          const accel = (alignment - 0.3) * influence * n.pull * 5.0 * (1 + n.streamLength * 1.5);
+          vx += hcos * accel * baseSpeed;
+          vy += hsin * accel * baseSpeed;
+        }
+
+        // Bleed stretch
+        if (n.bleed > 0.01) {
+          const bleedAccel = n.bleed * influence * n.stretch * 4.0 * (1 + n.streamLength * 1.5);
+          vx += hcos * bleedAccel * baseSpeed;
+          vy += hsin * bleedAccel * baseSpeed;
+        }
+
+        // ── DETACHMENT TRIGGER ──
+        if (influence > 0.2 && esc > 0.15) {
+          const speed = Math.sqrt(vx * vx + vy * vy) || 1;
+          pdetach[i] = 1;
+          pdirX[i] = vx / speed;
+          pdirY[i] = vy / speed;
+          pSpeed[i] = speed;
+          pSLen[i] = n.streamLength;
+          pDetachT[i] = 0;
+          pfade[i] = 1;
+          pSourceNode[i] = n.id;
+        }
       }
     }
 
@@ -267,8 +453,10 @@ export function update(dt) {
     }
     pescInf[i] = esc;
 
-    // Life drain
-    plife[i] -= 1;
+    // Life drain — skip for radial/center modes (lifetime is distance-driven, not time-driven)
+    if (!spiralCenter && !radialCenter && !radialEdgeMode) {
+      plife[i] -= 1;
+    }
 
     // Grain noise
     vx += (Math.random() - 0.5) * grainAmp * baseSpeed * 0.2;
@@ -281,12 +469,42 @@ export function update(dt) {
     // Respawn
     const newX = px[i];
     const newY = py[i];
-    const offCanvas = newX < -80 || newX >= DW + 80 || newY < -80 || newY >= DH + 80;
-    const sd = sdf.sample(newX, newY);
-    const outsideShape = sd > 0;
 
-    if (offCanvas || plife[i] <= 0 || (outsideShape && esc < 0.1)) {
-      spawnParticle(i);
+    if (spiralCenter || radialCenter) {
+      // [CENTER MODES] SDF-based death — use normalized radius for any shape
+      const toCX = newX - shapeCX, toCY = newY - shapeCY;
+      const cdist = Math.sqrt(toCX * toCX + toCY * toCY);
+      const sd = sdf.sample(newX, newY);
+      const absSd = Math.abs(sd);
+      const rNorm = cdist / (cdist + absSd + 0.01);
+      const atCenter = rNorm < 0.05; // ~5% normalized radius
+      const outsideShape = sd > 0; // particle left the shape boundary
+      const offCanvas = newX < -80 || newX >= DW + 80 || newY < -80 || newY >= DH + 80;
+      if (atCenter || outsideShape || offCanvas) {
+        spawnParticle(i);
+      }
+    } else if (radialEdgeMode) {
+      // [RADIAL-EDGE] SDF-based death — particles die near the boundary
+      const sd = sdf.sample(newX, newY);
+      const nearEdge = sd > -3; // within 3px of boundary (or outside)
+      const offCanvas = newX < -80 || newX >= DW + 80 || newY < -80 || newY >= DH + 80;
+      if (nearEdge || offCanvas) {
+        spawnParticle(i);
+      }
+    } else {
+      // Spiral-edge: original respawn logic + near-boundary thinning
+      const offCanvas = newX < -80 || newX >= DW + 80 || newY < -80 || newY >= DH + 80;
+      const sd = sdf.sample(newX, newY);
+      const outsideShape = sd > 0;
+      if (offCanvas || plife[i] <= 0 || (outsideShape && esc < 0.1)) {
+        spawnParticle(i);
+      } else if (!pdetach[i] && sd < 0 && Math.abs(sd) < 8) {
+        // Near boundary (within 8px inside): 2% chance per frame to respawn
+        // Prevents edge pile-up by recycling some particles before they accumulate
+        if (Math.random() < 0.02) {
+          spawnParticle(i);
+        }
+      }
     }
 
     pvx[i] = vx;
@@ -325,6 +543,22 @@ function drawParticles(ctx, w, h) {
   const buckets = [];
   for (let b = 0; b < NUM_BUCKETS; b++) buckets.push([]);
 
+  // Determine draw alpha mode per flow category + mode
+  const drawState = getState();
+  const isCenterDraw = (drawState.flowCategory === 'radial' && drawState.radialMode === 'center')
+                    || (drawState.flowCategory === 'spiral' && drawState.spiralMode === 'center');
+  const isEdgeDraw = (drawState.flowCategory === 'radial' && drawState.radialMode === 'edge')
+                  || (drawState.flowCategory === 'spiral' && drawState.spiralMode === 'edge');
+
+  // Shape center + radius for radial alpha gradient
+  let dShapeCX = 0, dShapeCY = 0, dShapeR = 1;
+  if (shape) {
+    const sb = shape.bounds;
+    dShapeCX = (sb.minX + sb.maxX) / 2;
+    dShapeCY = (sb.minY + sb.maxY) / 2;
+    dShapeR = Math.max(sb.maxX - sb.minX, sb.maxY - sb.minY) / 2 || 1;
+  }
+
   for (let i = 0; i < count; i++) {
     const fade = pfade[i];
     if (fade <= 0.01) continue;
@@ -332,17 +566,25 @@ function drawParticles(ctx, w, h) {
     let alpha;
     if (pdetach[i]) {
       alpha = 0.6 * fade;
-    } else {
+    } else if (isCenterDraw) {
+      // [CENTER MODES] SDF-based gradient: bright at center, dim at edge
+      const dxC = px[i] - dShapeCX, dyC = py[i] - dShapeCY;
+      const rDist = Math.sqrt(dxC * dxC + dyC * dyC);
       const sd = sdf.sample(px[i], py[i]);
-      const absDist = Math.abs(sd);
-      if (absDist < 5) {
-        alpha = 0.9 + Math.random() * 0.1;
-      } else if (absDist < 20) {
-        alpha = 0.5 + 0.4 * (1 - (absDist - 5) / 15);
-      } else {
-        alpha = 0.3 + 0.2 * Math.max(0, 1 - absDist / 60);
-      }
-      alpha *= fade;
+      const absSd = Math.abs(sd);
+      const rNorm = Math.min(rDist / (rDist + absSd + 0.01), 1);
+      alpha = (0.1 + 0.9 * (1 - rNorm)) * fade;
+    } else if (isEdgeDraw) {
+      // [EDGE MODES] SDF-based gradient: dim at center, bright at edge
+      const dxC = px[i] - dShapeCX, dyC = py[i] - dShapeCY;
+      const rDist = Math.sqrt(dxC * dxC + dyC * dyC);
+      const sd = sdf.sample(px[i], py[i]);
+      const absSd = Math.abs(sd);
+      const rNorm = Math.min(rDist / (rDist + absSd + 0.01), 1);
+      alpha = (0.1 + 0.9 * rNorm) * fade;
+    } else {
+      // Default (no special gradient)
+      alpha = fade;
     }
 
     const bucket = Math.min(NUM_BUCKETS - 1, Math.floor(alpha * NUM_BUCKETS));
@@ -392,6 +634,16 @@ export function scaleParticles(factor, cx, cy, newShape, newSdf) {
   for (let i = 0; i < count; i++) {
     px[i] = cx + (px[i] - cx) * factor;
     py[i] = cy + (py[i] - cy) * factor;
+  }
+}
+
+// Non-uniform scale all particle positions by (fx, fy) around (cx, cy) and update shape/sdf references
+export function scaleParticlesXY(fx, fy, cx, cy, newShape, newSdf) {
+  shape = newShape;
+  sdf = newSdf;
+  for (let i = 0; i < count; i++) {
+    px[i] = cx + (px[i] - cx) * fx;
+    py[i] = cy + (py[i] - cy) * fy;
   }
 }
 

@@ -2,7 +2,7 @@ import { nodeColor, hexAlpha } from '../utils/color.js';
 import { normA, fmtAngle } from '../utils/math.js';
 import {
   getState, setActiveId, setFlowDir,
-  setFillDensity, setSpeedMult, setGrainSpace, setStretchPct, setParticleColor,
+  setFillDensity, setSpeedMult, setGrainSpace, setStretchPct, setParticleColor, setFlowCategory, setSpiralMode, setRadialMode,
   addNodeAtBestGap, deleteNode, getNodeById,
   linkAnchorToNode, setPlacingAnchor, deleteAnchor, getAnchorById,
   setActiveAnchorId,
@@ -14,6 +14,13 @@ import {
   removeAsset, selectAsset, deselectAll,
   getBgColor, setBgColor, pushGlobalUndo,
 } from '../core/ShapeManager.js';
+
+// ── Shape creation callbacks ────────────────────────────────────────────────
+let _onCreatePrimitive = null;
+let _onActivatePenTool = null;
+
+export function setOnCreatePrimitive(cb) { _onCreatePrimitive = cb; }
+export function setOnActivatePenTool(cb) { _onActivatePenTool = cb; }
 
 // ── Popover state ───────────────────────────────────────────────────────────
 let openPopover = null;  // { type: 'node'|'anchor'|'shape', id: number }
@@ -62,6 +69,9 @@ function openShapePopover(asset, rowEl) {
   pop.style.right = (window.innerWidth - panelRect.left + 8) + 'px';
 
   const flowDir = state.flowDir;
+  const fCat = state.flowCategory || 'spiral';
+  const sMode = state.spiralMode || 'edge';
+  const rMode = state.radialMode || 'edge';
   const fillPct = Math.round(state.fillDensity * 100);
   const speedVal = state.speedMult.toFixed(1);
   const grainVal = state.grainSpace;
@@ -76,9 +86,29 @@ function openShapePopover(asset, rowEl) {
     </div>
     <div class="pop-body">
       <div class="pop-group-label">Direction</div>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
+      <div style="display:flex;gap:6px;margin-bottom:4px">
         <button class="dir-btn${flowDir === 1 ? ' active' : ''}" data-dir="1">CCW</button>
         <button class="dir-btn${flowDir === -1 ? ' active' : ''}" data-dir="-1">CW</button>
+      </div>
+
+      <div class="pop-group-label">Flow Type</div>
+      <div class="flow-cat-row" style="margin-bottom:8px">
+        <label class="flow-cat-label${fCat === 'spiral' ? ' active' : ''}">
+          <input type="radio" name="flow-cat" value="spiral" ${fCat === 'spiral' ? 'checked' : ''}> Spiral
+        </label>
+        <div class="flow-sub${fCat === 'spiral' ? '' : ' disabled'}" id="spiral-sub">
+          <button class="grav-btn spiral-btn${fCat === 'spiral' && sMode === 'edge' ? ' active' : ''}" data-spiral="edge" ${fCat !== 'spiral' ? 'disabled' : ''}>Edge</button>
+          <button class="grav-btn spiral-btn${fCat === 'spiral' && sMode === 'center' ? ' active' : ''}" data-spiral="center" ${fCat !== 'spiral' ? 'disabled' : ''}>Center</button>
+        </div>
+      </div>
+      <div class="flow-cat-row" style="margin-bottom:4px">
+        <label class="flow-cat-label${fCat === 'radial' ? ' active' : ''}">
+          <input type="radio" name="flow-cat" value="radial" ${fCat === 'radial' ? 'checked' : ''}> Radial
+        </label>
+        <div class="flow-sub${fCat === 'radial' ? '' : ' disabled'}" id="radial-sub">
+          <button class="grav-btn radial-btn${fCat === 'radial' && rMode === 'edge' ? ' active' : ''}" data-radial="edge" ${fCat !== 'radial' ? 'disabled' : ''}>Edge</button>
+          <button class="grav-btn radial-btn${fCat === 'radial' && rMode === 'center' ? ' active' : ''}" data-radial="center" ${fCat !== 'radial' ? 'disabled' : ''}>Center</button>
+        </div>
       </div>
 
       <div class="pop-group-label">Flow</div>
@@ -144,6 +174,55 @@ function bindShapePopoverEvents(pop, asset) {
       pop.querySelectorAll('.dir-btn').forEach(x => x.classList.toggle('active', x === b));
       buildPanel();
       renderOverlay();
+    });
+  });
+
+  // Flow category radio buttons
+  pop.querySelectorAll('input[name="flow-cat"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      pushGlobalUndo();
+      const cat = radio.value;
+      setFlowCategory(cat);
+      // Update label highlights
+      pop.querySelectorAll('.flow-cat-label').forEach(l => l.classList.toggle('active', l.querySelector('input').value === cat));
+      // Enable/disable sub-buttons
+      const spiralSub = pop.querySelector('#spiral-sub');
+      const radialSub = pop.querySelector('#radial-sub');
+      spiralSub.classList.toggle('disabled', cat !== 'spiral');
+      radialSub.classList.toggle('disabled', cat !== 'radial');
+      spiralSub.querySelectorAll('.spiral-btn').forEach(b => b.disabled = cat !== 'spiral');
+      radialSub.querySelectorAll('.radial-btn').forEach(b => b.disabled = cat !== 'radial');
+      // Activate the current sub-mode button for the selected category
+      if (cat === 'spiral') {
+        const sm = getState().spiralMode || 'edge';
+        spiralSub.querySelectorAll('.spiral-btn').forEach(b => b.classList.toggle('active', b.dataset.spiral === sm));
+      } else {
+        const rm = getState().radialMode || 'edge';
+        radialSub.querySelectorAll('.radial-btn').forEach(b => b.classList.toggle('active', b.dataset.radial === rm));
+      }
+      reinitParticles();
+    });
+  });
+
+  // Spiral mode buttons
+  pop.querySelectorAll('.spiral-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      if (b.disabled) return;
+      pushGlobalUndo();
+      setSpiralMode(b.dataset.spiral);
+      pop.querySelectorAll('.spiral-btn').forEach(x => x.classList.toggle('active', x === b));
+      reinitParticles();
+    });
+  });
+
+  // Radial mode buttons
+  pop.querySelectorAll('.radial-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      if (b.disabled) return;
+      pushGlobalUndo();
+      setRadialMode(b.dataset.radial);
+      pop.querySelectorAll('.radial-btn').forEach(x => x.classList.toggle('active', x === b));
+      reinitParticles();
     });
   });
 
@@ -704,11 +783,61 @@ export function buildPanel() {
 }
 
 export function initGlobalControls() {
-  // Add shape button → trigger file input
+  // [SHAPE-TOOLS] Add shape button → show creation popover
   const addShapeBtn = document.getElementById('add-shape-btn');
   if (addShapeBtn) {
-    addShapeBtn.addEventListener('click', () => {
-      document.getElementById('file-input').click();
+    addShapeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Toggle popover
+      const existing = document.querySelector('.shape-create-popover');
+      if (existing) { existing.remove(); return; }
+
+      const pop = document.createElement('div');
+      pop.className = 'shape-create-popover';
+
+      // Position below the button
+      const btnRect = addShapeBtn.getBoundingClientRect();
+      pop.style.top = (btnRect.bottom + 4) + 'px';
+      pop.style.right = (window.innerWidth - btnRect.right) + 'px';
+
+      pop.innerHTML = `
+        <div class="shape-create-row" data-action="circle"><span>&#9675;</span> Circle</div>
+        <div class="shape-create-row" data-action="rect"><span>&#9645;</span> Rectangle</div>
+        <div class="shape-create-row" data-action="polygon"><span>&#11047;</span> Polygon <input type="number" class="poly-sides" min="3" max="12" value="6"></div>
+        <div class="shape-create-row" data-action="pen"><span>&#10022;</span> Pen Tool</div>
+        <div class="shape-create-row" data-action="svg"><span>&uarr;</span> Upload SVG</div>
+      `;
+
+      document.body.appendChild(pop);
+
+      // Prevent clicks on number input from closing
+      const sidesInput = pop.querySelector('.poly-sides');
+      sidesInput.addEventListener('click', ev => ev.stopPropagation());
+      sidesInput.addEventListener('mousedown', ev => ev.stopPropagation());
+
+      function closeCreatePopover() { pop.remove(); document.removeEventListener('mousedown', outsideClick); }
+
+      function outsideClick(ev) {
+        if (!pop.contains(ev.target) && ev.target !== addShapeBtn) closeCreatePopover();
+      }
+      // Defer so the current click doesn't immediately close
+      setTimeout(() => document.addEventListener('mousedown', outsideClick), 0);
+
+      pop.querySelectorAll('.shape-create-row').forEach(row => {
+        row.addEventListener('click', (ev) => {
+          if (ev.target.classList.contains('poly-sides')) return; // don't trigger on number input click
+          const action = row.dataset.action;
+          const sides = parseInt(sidesInput.value) || 6;
+          closeCreatePopover();
+          if (action === 'circle' || action === 'rect' || action === 'polygon') {
+            if (_onCreatePrimitive) _onCreatePrimitive(action, sides);
+          } else if (action === 'pen') {
+            if (_onActivatePenTool) _onActivatePenTool();
+          } else if (action === 'svg') {
+            document.getElementById('file-input').click();
+          }
+        });
+      });
     });
   }
 

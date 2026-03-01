@@ -5,22 +5,22 @@ import { normA } from './utils/math.js';
 import {
   init as initParticles, update as updateParticles,
   clearFrame, renderAssetParticles, loadFromSnapshot, saveToSnapshot,
-  reinit as reinitParticles, translateParticles, scaleParticles, rotateParticles,
+  reinit as reinitParticles, translateParticles, scaleParticles, scaleParticlesXY, rotateParticles,
 } from './core/ParticleSystem.js';
 import { renderOverlay } from './nodes/NodeOverlay.js';
 import {
   getState, setActiveId, setDragState, hitTest, handleDrag, nPos,
   addNode, deleteActiveNode,
   addNodeAtBestGap, selectNodeByIndex, togglePaused,
-  setShape, setActiveAnchorId, getPlacingAnchor, setPlacingAnchor, clearPlacingAnchor,
+  setShape, clearShape, setActiveAnchorId, getPlacingAnchor, setPlacingAnchor, clearPlacingAnchor,
   addAnchor, linkAnchorToNode, deleteAnchor,
   translateAnchors, rotateNodes, rotateAnchors, scaleAnchors,
   saveNodeStateWithShape, restoreNodeStateWithShape, restoreNodeState,
 } from './nodes/NodeManager.js';
-import { buildPanel, initGlobalControls } from './ui/Panel.js';
+import { buildPanel, initGlobalControls, setOnCreatePrimitive, setOnActivatePenTool } from './ui/Panel.js';
 import { initUploadHandler, setOnShapeChange } from './ui/UploadHandler.js';
+import { createCircleShape, createRectShape, createRegularPolygon, createPolygonFromPoints } from './core/ShapeParser.js';
 import { initExportModal, openExportModal } from './ui/ExportModal.js';
-import { createCircleShape } from './core/ShapeParser.js';
 import { DistanceField } from './core/DistanceField.js';
 import {
   initFileManager, setOnSwitch, updateActiveFileDimensions,
@@ -125,22 +125,6 @@ if (didRestore) {
   updateCanvasSizeDropdown();
   updateExportResolutionLabels();
   updatePositionSliderRanges();
-} else {
-  // Load default circle shape via ShapeManager
-  const defaultShape = createCircleShape(108);
-  const defaultSdf = new DistanceField(defaultShape);
-  defaultSdf.compute();
-
-  const firstAsset = addAsset(defaultShape, defaultSdf, 'Circle');
-  setShape(defaultShape, defaultSdf);
-
-  const state0 = getState();
-  const initCount = Math.min(Math.round(500 + state0.fillDensity * 4500), getMaxPerAsset());
-  initParticles(defaultShape, defaultSdf, initCount);
-
-  firstAsset.nodeState = saveNodeStateWithShape();
-  saveToSnapshot(firstAsset.particles);
-  selectAsset(firstAsset.id);
 }
 
 // Clear dither canvas
@@ -187,6 +171,113 @@ setOnShapeChange((shape, sdf, name) => {
   buildPanel();
   renderOverlay();
 });
+
+// [SHAPE-TOOLS] — primitive shape creation (identical pipeline to SVG upload)
+setOnCreatePrimitive((type, sides) => {
+  pushGlobalUndo();
+  deselectAll();
+  restoreNodeState(createDefaultNodeState());
+  let shape, name;
+  if (type === 'circle') { shape = createCircleShape(); name = 'Circle'; }
+  else if (type === 'rect') { shape = createRectShape(); name = 'Rectangle'; }
+  else if (type === 'polygon') { shape = createRegularPolygon(sides); name = `Polygon ${sides}`; }
+  else return;
+  const sdf = new DistanceField(shape); sdf.compute();
+  setShape(shape, sdf);
+  const asset = addAsset(shape, sdf, name);
+  const s = getState();
+  const cnt = Math.min(Math.round(500 + s.fillDensity * 4500), getMaxPerAsset());
+  initParticles(shape, sdf, cnt);
+  asset.nodeState = saveNodeStateWithShape();
+  saveToSnapshot(asset.particles);
+  selectAsset(asset.id);
+  const { dctx } = getCanvasRefs();
+  dctx.fillStyle = getBgColor();
+  dctx.fillRect(0, 0, W, H);
+  syncPositionSliders(0, 0);
+  syncScaleRotateSliders(100, 0);
+  syncGlobalSlidersFromState();
+  buildPanel();
+  renderOverlay();
+});
+
+// [SHAPE-TOOLS] — Pen tool state
+let penToolActive = false, penPoints = [], penCursor = null, penSnapClose = false;
+let penOverlayRAF = 0; // throttle pen tool overlay redraws
+let savedFooterHint = '';
+
+export function getPenToolState() {
+  return { active: penToolActive, points: penPoints, cursor: penCursor, snapClose: penSnapClose };
+}
+
+function finishPenTool(createShape) {
+  if (createShape && penPoints.length >= 3) {
+    // Remove duplicate last point from dblclick
+    const last = penPoints[penPoints.length - 1];
+    const prev = penPoints[penPoints.length - 2];
+    if (last && prev && Math.abs(last.x - prev.x) < 2 && Math.abs(last.y - prev.y) < 2) {
+      penPoints.pop();
+    }
+    if (penPoints.length >= 3) {
+      pushGlobalUndo();
+      deselectAll();
+      restoreNodeState(createDefaultNodeState());
+      const shape = createPolygonFromPoints(penPoints);
+      if (shape) {
+        const sdf = new DistanceField(shape); sdf.compute();
+        setShape(shape, sdf);
+        const asset = addAsset(shape, sdf, 'Pen Shape');
+        const s = getState();
+        const cnt = Math.min(Math.round(500 + s.fillDensity * 4500), getMaxPerAsset());
+        initParticles(shape, sdf, cnt);
+        asset.nodeState = saveNodeStateWithShape();
+        saveToSnapshot(asset.particles);
+        selectAsset(asset.id);
+        const { dctx } = getCanvasRefs();
+        dctx.fillStyle = getBgColor();
+        dctx.fillRect(0, 0, W, H);
+        syncPositionSliders(0, 0);
+        syncScaleRotateSliders(100, 0);
+        syncGlobalSlidersFromState();
+      }
+    }
+  }
+  penToolActive = false;
+  penPoints = [];
+  penCursor = null;
+  penSnapClose = false;
+  if (penOverlayRAF) { cancelAnimationFrame(penOverlayRAF); penOverlayRAF = 0; }
+  document.getElementById('overlay-canvas').classList.remove('pen-tool');
+  const footer = document.querySelector('#panel-footer .hint');
+  if (footer && savedFooterHint) footer.innerHTML = savedFooterHint;
+  buildPanel();
+  renderOverlay();
+}
+
+setOnActivatePenTool(() => {
+  penToolActive = true;
+  penPoints = [];
+  penCursor = null;
+  document.getElementById('overlay-canvas').classList.add('pen-tool');
+  const footer = document.querySelector('#panel-footer .hint');
+  if (footer) {
+    savedFooterHint = footer.innerHTML;
+    footer.innerHTML = '<b>Click</b> place point &middot; <b>Dblclick/Enter</b> close shape &middot; <b>Esc</b> cancel';
+  }
+  renderOverlay();
+});
+
+// [SHAPE-TOOLS] — Bbox handles state
+let bboxDrag = null;
+
+// [SHAPE-TOOLS] — Vertex drag state
+let vertexDrag = null;
+let vertexOverlayRAF = 0;
+
+export function getVertexPositions() {
+  const s = getState();
+  return s.currentShape?.sourceVertices || null;
+}
 
 // Pause indicator element
 const pauseDiv = document.createElement('div');
@@ -482,12 +573,94 @@ updateExportResolutionLabels();
 // ── Clipboard for copy/paste ──────────────────────────────────────────────────
 let clipboardAssetId = null;
 
+// [SHAPE-TOOLS] Bbox handle positions: TL, TC, TR, MR, BR, BC, BL, ML
+export function getBboxHandlePositions(b) {
+  const mx = (b.minX + b.maxX) / 2, my = (b.minY + b.maxY) / 2;
+  return [
+    { x: b.minX, y: b.minY }, // 0 TL
+    { x: mx,     y: b.minY }, // 1 TC
+    { x: b.maxX, y: b.minY }, // 2 TR
+    { x: b.maxX, y: my     }, // 3 MR
+    { x: b.maxX, y: b.maxY }, // 4 BR
+    { x: mx,     y: b.maxY }, // 5 BC
+    { x: b.minX, y: b.maxY }, // 6 BL
+    { x: b.minX, y: my     }, // 7 ML
+  ];
+}
+
+// [SHAPE-TOOLS] Bbox anchor point (opposite corner/edge for scale origin)
+function getBboxAnchorX(hi, b) {
+  // Opposite X: if dragging left side → anchor right, and vice versa
+  if (hi === 0 || hi === 7 || hi === 6) return b.maxX;
+  if (hi === 2 || hi === 3 || hi === 4) return b.minX;
+  return (b.minX + b.maxX) / 2; // top/bottom center → center X
+}
+function getBboxAnchorY(hi, b) {
+  if (hi === 0 || hi === 1 || hi === 2) return b.maxY;
+  if (hi === 4 || hi === 5 || hi === 6) return b.minY;
+  return (b.minY + b.maxY) / 2;
+}
+
 // ── Drag handling ────────────────────────────────────────────────────────────
 let shapeDrag = null;
 const oc = document.getElementById('overlay-canvas');
 
 oc.addEventListener('mousedown', e => {
   const pos = toDither(e);
+
+  // [SHAPE-TOOLS] Pen tool click
+  if (penToolActive) {
+    // Snap-to-close: if near first point and enough points, auto-close
+    if (penPoints.length >= 2) {
+      const fp = penPoints[0];
+      const dx = pos.x - fp.x, dy = pos.y - fp.y;
+      if (dx * dx + dy * dy < 64) { // 8px threshold
+        finishPenTool(true);
+        return;
+      }
+    }
+    penPoints.push({ x: pos.x, y: pos.y });
+    renderOverlay();
+    return;
+  }
+
+  // [SHAPE-TOOLS] Vertex handle hit test (before bbox — more specific)
+  if (!penToolActive && getSelectedAssetId() !== null) {
+    const st = getState();
+    if (st.currentShape?.sourceVertices) {
+      const verts = st.currentShape.sourceVertices;
+      for (let i = 0; i < verts.length; i++) {
+        const v = verts[i];
+        const dx = pos.x - v.x, dy = pos.y - v.y;
+        if (dx * dx + dy * dy < 64) { // 8px threshold
+          pushGlobalUndo();
+          vertexDrag = {
+            vertexIndex: i,
+            previewVertices: verts.map(p => ({ x: p.x, y: p.y })),
+          };
+          return;
+        }
+      }
+    }
+  }
+
+  // [SHAPE-TOOLS] Bbox handle hit test
+  if (!penToolActive && getSelectedAssetId() !== null) {
+    const st = getState();
+    if (st.currentShape) {
+      const b = st.currentShape.bounds;
+      const handles = getBboxHandlePositions(b);
+      for (let i = 0; i < handles.length; i++) {
+        const h = handles[i];
+        const dx = pos.x - h.x, dy = pos.y - h.y;
+        if (dx * dx + dy * dy < 100) { // 10px threshold
+          pushGlobalUndo();
+          bboxDrag = { handleIndex: i, startBounds: { ...b }, startPos: { x: pos.x, y: pos.y } };
+          return;
+        }
+      }
+    }
+  }
 
   // Anchor placement mode
   const placingFor = getPlacingAnchor();
@@ -619,8 +792,134 @@ oc.addEventListener('mousedown', e => {
   renderOverlay();
 });
 
+// [SHAPE-TOOLS] Pen tool dblclick to close path
+oc.addEventListener('dblclick', e => {
+  if (penToolActive && penPoints.length >= 3) {
+    finishPenTool(true);
+  }
+});
+
 oc.addEventListener('mousemove', e => {
   const pos = toDither(e);
+
+  // [SHAPE-TOOLS] Pen tool cursor tracking (throttled to one repaint per frame)
+  if (penToolActive) {
+    penCursor = { x: pos.x, y: pos.y };
+    if (penPoints.length >= 2) {
+      const fp = penPoints[0];
+      const dx = pos.x - fp.x, dy = pos.y - fp.y;
+      penSnapClose = dx * dx + dy * dy < 64;
+    } else {
+      penSnapClose = false;
+    }
+    if (!penOverlayRAF) {
+      penOverlayRAF = requestAnimationFrame(() => {
+        penOverlayRAF = 0;
+        renderOverlay();
+      });
+    }
+    return;
+  }
+
+  // [SHAPE-TOOLS] Vertex drag preview
+  if (vertexDrag) {
+    vertexDrag.previewVertices[vertexDrag.vertexIndex] = { x: pos.x, y: pos.y };
+    if (!vertexOverlayRAF) {
+      vertexOverlayRAF = requestAnimationFrame(() => {
+        vertexOverlayRAF = 0;
+        renderOverlay({ vertexPreview: vertexDrag.previewVertices, vertexIndex: vertexDrag.vertexIndex });
+      });
+    }
+    return;
+  }
+
+  // [SHAPE-TOOLS] Bbox drag — freeform (default) or uniform (Shift)
+  if (bboxDrag) {
+    const s = getState();
+    if (!s.currentShape) { bboxDrag = null; return; }
+    const b = bboxDrag.startBounds;
+    const oldW = b.maxX - b.minX;
+    const oldH = b.maxY - b.minY;
+    const dx = pos.x - bboxDrag.startPos.x;
+    const dy = pos.y - bboxDrag.startPos.y;
+    const hi = bboxDrag.handleIndex;
+
+    // Compute separate scaleX, scaleY from drag
+    let scaleX = 1, scaleY = 1;
+    // Corner handles: 0=TL, 2=TR, 4=BR, 6=BL
+    // Edge handles: 1=TC, 3=MR, 5=BC, 7=ML
+    if (hi === 4 || hi === 3 || hi === 2) scaleX = oldW > 0 ? (oldW + dx) / oldW : 1;
+    if (hi === 0 || hi === 7 || hi === 6) scaleX = oldW > 0 ? (oldW - dx) / oldW : 1;
+    if (hi === 4 || hi === 5 || hi === 6) scaleY = oldH > 0 ? (oldH + dy) / oldH : 1;
+    if (hi === 0 || hi === 1 || hi === 2) scaleY = oldH > 0 ? (oldH - dy) / oldH : 1;
+
+    const isCorner = hi === 0 || hi === 2 || hi === 4 || hi === 6;
+    const isEdgeV = hi === 1 || hi === 5; // top/bottom center
+    const isEdgeH = hi === 3 || hi === 7; // mid right/left
+
+    // Edge handles: only change their axis
+    if (isEdgeV) { scaleX = 1; }
+    if (isEdgeH) { scaleY = 1; }
+
+    // Shift+drag = proportional (uniform) for corners
+    if (e.shiftKey && isCorner) {
+      const factor = (Math.abs(scaleX - 1) > Math.abs(scaleY - 1)) ? scaleX : scaleY;
+      scaleX = factor;
+      scaleY = factor;
+    }
+
+    // Clamp
+    scaleX = Math.max(0.05, scaleX);
+    scaleY = Math.max(0.05, scaleY);
+
+    // Alt = scale from center
+    const cx = e.altKey ? (b.minX + b.maxX) / 2 : getBboxAnchorX(hi, b);
+    const cy = e.altKey ? (b.minY + b.maxY) / 2 : getBboxAnchorY(hi, b);
+
+    renderOverlay({ dx: 0, dy: 0, scaleX, scaleY, rotate: 0, cx, cy });
+    bboxDrag.currentFX = scaleX;
+    bboxDrag.currentFY = scaleY;
+    bboxDrag.cx = cx;
+    bboxDrag.cy = cy;
+    return;
+  }
+
+  // Dynamic cursors when hovering vertex handles or bbox handles
+  const selId = getSelectedAssetId();
+  if (selId !== null && !shapeDrag) {
+    const st = getState();
+    if (st.currentShape && !penToolActive) {
+      let foundCursor = false;
+      // Vertex handles first (higher priority)
+      if (st.currentShape.sourceVertices) {
+        for (const v of st.currentShape.sourceVertices) {
+          const vx = pos.x - v.x, vy = pos.y - v.y;
+          if (vx * vx + vy * vy < 64) {
+            oc.style.cursor = 'move';
+            foundCursor = true;
+            break;
+          }
+        }
+      }
+      // Bbox handles
+      if (!foundCursor) {
+        const b = st.currentShape.bounds;
+        const handles = getBboxHandlePositions(b);
+        const cursorMap = ['nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize',
+                           'nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize'];
+        for (let i = 0; i < handles.length; i++) {
+          const h = handles[i];
+          const hx = pos.x - h.x, hy = pos.y - h.y;
+          if (hx * hx + hy * hy < 100) {
+            oc.style.cursor = cursorMap[i];
+            foundCursor = true;
+            break;
+          }
+        }
+      }
+      if (!foundCursor) oc.style.cursor = '';
+    }
+  }
 
   if (shapeDrag) {
     shapeDrag.dx = pos.x - shapeDrag.startX;
@@ -656,6 +955,76 @@ oc.addEventListener('mousemove', e => {
 });
 
 oc.addEventListener('mouseup', () => {
+  // [SHAPE-TOOLS] Vertex drag commit
+  if (vertexDrag) {
+    const newVerts = vertexDrag.previewVertices;
+    vertexDrag = null;
+    if (vertexOverlayRAF) { cancelAnimationFrame(vertexOverlayRAF); vertexOverlayRAF = 0; }
+    const newShape = createPolygonFromPoints(newVerts);
+    if (newShape) {
+      const newSdf = new DistanceField(newShape);
+      newSdf.compute();
+      setShape(newShape, newSdf);
+      const s = getState();
+      for (const n of s.nodes) {
+        const info = newShape.getNearestBoundary(nPos(n).x, nPos(n).y);
+        n.t = info.t;
+      }
+      const s2 = getState();
+      const cnt = Math.min(Math.round(500 + s2.fillDensity * 4500), getMaxPerAsset());
+      initParticles(newShape, newSdf, cnt);
+      const { dctx } = getCanvasRefs();
+      dctx.fillStyle = getBgColor();
+      dctx.fillRect(0, 0, W, H);
+      syncPositionSliders(0, 0);
+      syncScaleRotateSliders(100, 0);
+    }
+    buildPanel();
+    renderOverlay();
+    return;
+  }
+
+  // [SHAPE-TOOLS] Bbox drag commit — freeform or uniform
+  if (bboxDrag) {
+    const fx = bboxDrag.currentFX || 1;
+    const fy = bboxDrag.currentFY || 1;
+    const cx = bboxDrag.cx;
+    const cy = bboxDrag.cy;
+    bboxDrag = null;
+    const changed = Math.abs(fx - 1) > 0.001 || Math.abs(fy - 1) > 0.001;
+    if (changed) {
+      const s = getState();
+      if (s.currentShape) {
+        if (Math.abs(fx - fy) < 0.001) {
+          // Uniform
+          s.currentShape.scale(fx, cx, cy);
+        } else {
+          // Non-uniform
+          s.currentShape.scaleXY(fx, fy, cx, cy);
+        }
+        const newSdf = new DistanceField(s.currentShape);
+        newSdf.compute();
+        setShape(s.currentShape, newSdf, true);
+        for (const n of s.nodes) {
+          const info = s.currentShape.getNearestBoundary(nPos(n).x, nPos(n).y);
+          n.t = info.t;
+        }
+        if (Math.abs(fx - fy) < 0.001) {
+          scaleParticles(fx, cx, cy, s.currentShape, newSdf);
+        } else {
+          scaleParticlesXY(fx, fy, cx, cy, s.currentShape, newSdf);
+        }
+        const { dctx } = getCanvasRefs();
+        dctx.fillStyle = getBgColor();
+        dctx.fillRect(0, 0, W, H);
+        syncScaleRotateSliders(100, 0);
+      }
+    }
+    buildPanel();
+    renderOverlay();
+    return;
+  }
+
   if (shapeDrag) {
     const { dx, dy } = shapeDrag;
     shapeDrag = null;
@@ -686,6 +1055,8 @@ oc.addEventListener('mouseup', () => {
   setDragState(null);
 });
 oc.addEventListener('mouseleave', () => {
+  if (vertexDrag) { vertexDrag = null; if (vertexOverlayRAF) { cancelAnimationFrame(vertexOverlayRAF); vertexOverlayRAF = 0; } renderOverlay(); return; }
+  if (bboxDrag) { bboxDrag = null; renderOverlay(); return; }
   if (shapeDrag) {
     shapeDrag = null;
     renderOverlay();
@@ -796,6 +1167,20 @@ function restoreAfterUndo() {
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
 
+  // [SHAPE-TOOLS] Pen tool keyboard
+  if (penToolActive) {
+    if (e.key === 'Enter' && penPoints.length >= 3) {
+      e.preventDefault();
+      finishPenTool(true);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      finishPenTool(false);
+      return;
+    }
+  }
+
   // ── Save project (Ctrl/Cmd+S) ──
   if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
@@ -855,6 +1240,7 @@ document.addEventListener('keydown', e => {
       // No active node/anchor — delete the whole shape
       pushGlobalUndo();
       removeAsset(selId);
+      clearShape();
       const { dctx } = getCanvasRefs();
       dctx.fillStyle = getBgColor();
       dctx.fillRect(0, 0, W, H);

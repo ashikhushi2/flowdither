@@ -2,7 +2,7 @@ import { DW, DH, CX, CY } from '../utils/canvas.js';
 
 // Represents a parsed shape with boundary points, tangents, and containment testing
 export class Shape {
-  constructor({ points, tangents, normals, pathLength, isPointInside, bounds }) {
+  constructor({ points, tangents, normals, pathLength, isPointInside, bounds, sourceVertices }) {
     this.points = points;         // [{x, y}] sampled boundary points
     this.tangents = tangents;     // [{x, y}] unit tangent at each point
     this.normals = normals;       // [{x, y}] outward unit normal at each point
@@ -10,6 +10,7 @@ export class Shape {
     this.isPointInside = isPointInside; // (x, y) => boolean
     this.bounds = bounds;         // {minX, minY, maxX, maxY}
     this.numPoints = points.length;
+    this.sourceVertices = sourceVertices || null; // [{x,y}] original polygon vertices
   }
 
   // Get nearest boundary point info for a pixel
@@ -45,6 +46,7 @@ export class Shape {
     this.bounds.minY += dy;
     this.bounds.maxX += dx;
     this.bounds.maxY += dy;
+    if (this.sourceVertices) for (const v of this.sourceVertices) { v.x += dx; v.y += dy; }
     this._rebuildIsPointInside();
   }
 
@@ -66,7 +68,45 @@ export class Shape {
     if (this.bounds.minY > this.bounds.maxY) {
       const tmp = this.bounds.minY; this.bounds.minY = this.bounds.maxY; this.bounds.maxY = tmp;
     }
+    if (this.sourceVertices) for (const v of this.sourceVertices) { v.x = cx + (v.x - cx) * factor; v.y = cy + (v.y - cy) * factor; }
     this.pathLength *= Math.abs(factor);
+    this._rebuildIsPointInside();
+  }
+
+  // Non-uniform scale all boundary points by (fx, fy) around (cx, cy), recompute tangents/normals
+  scaleXY(fx, fy, cx, cy) {
+    for (let i = 0; i < this.numPoints; i++) {
+      this.points[i].x = cx + (this.points[i].x - cx) * fx;
+      this.points[i].y = cy + (this.points[i].y - cy) * fy;
+    }
+    // Non-uniform scale invalidates unit tangents/normals — recompute from adjacent points
+    for (let i = 0; i < this.numPoints; i++) {
+      const prev = (i - 1 + this.numPoints) % this.numPoints;
+      const next = (i + 1) % this.numPoints;
+      let tx = this.points[next].x - this.points[prev].x;
+      let ty = this.points[next].y - this.points[prev].y;
+      const tLen = Math.sqrt(tx * tx + ty * ty) || 1;
+      tx /= tLen;
+      ty /= tLen;
+      this.tangents[i].x = tx;
+      this.tangents[i].y = ty;
+      // Normal is perpendicular to tangent
+      this.normals[i].x = ty;
+      this.normals[i].y = -tx;
+    }
+    // Update bounds
+    this.bounds.minX = cx + (this.bounds.minX - cx) * fx;
+    this.bounds.maxX = cx + (this.bounds.maxX - cx) * fx;
+    this.bounds.minY = cy + (this.bounds.minY - cy) * fy;
+    this.bounds.maxY = cy + (this.bounds.maxY - cy) * fy;
+    if (this.bounds.minX > this.bounds.maxX) {
+      const tmp = this.bounds.minX; this.bounds.minX = this.bounds.maxX; this.bounds.maxX = tmp;
+    }
+    if (this.bounds.minY > this.bounds.maxY) {
+      const tmp = this.bounds.minY; this.bounds.minY = this.bounds.maxY; this.bounds.maxY = tmp;
+    }
+    if (this.sourceVertices) for (const v of this.sourceVertices) { v.x = cx + (v.x - cx) * fx; v.y = cy + (v.y - cy) * fy; }
+    this.pathLength *= Math.sqrt(fx * fx + fy * fy) / Math.SQRT2;
     this._rebuildIsPointInside();
   }
 
@@ -90,38 +130,18 @@ export class Shape {
       this.normals[i].x = nx * cos - ny * sin;
       this.normals[i].y = nx * sin + ny * cos;
     }
+    if (this.sourceVertices) for (const v of this.sourceVertices) {
+      const vdx = v.x - cx, vdy = v.y - cy;
+      v.x = cx + vdx * cos - vdy * sin;
+      v.y = cy + vdx * sin + vdy * cos;
+    }
     this.bounds = { minX, minY, maxX, maxY };
     this._rebuildIsPointInside();
   }
 
-  // Rebuild isPointInside using a test canvas (shared by translate, scale, rotate)
+  // Rebuild isPointInside using ray-casting (no DOM canvas needed)
   _rebuildIsPointInside() {
-    const testCanvas = document.createElement('canvas');
-    const w = Math.ceil(this.bounds.maxX + 50);
-    const h = Math.ceil(this.bounds.maxY + 50);
-    testCanvas.width = w;
-    testCanvas.height = h;
-    const ctx = testCanvas.getContext('2d');
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = 'white';
-    ctx.beginPath();
-    for (let i = 0; i < this.numPoints; i++) {
-      const p = this.points[i];
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    }
-    ctx.closePath();
-    ctx.fill();
-    const imgData = ctx.getImageData(0, 0, w, h);
-    const pixels = imgData.data;
-    const tw = w;
-    this.isPointInside = (x, y) => {
-      const px = Math.round(x);
-      const py = Math.round(y);
-      if (px < 0 || px >= tw || py < 0 || py >= h) return false;
-      return pixels[(py * tw + px) * 4] > 128;
-    };
+    this.isPointInside = raycastIsPointInside(this.points);
   }
 
   // Deep clone this shape (for undo snapshots)
@@ -136,19 +156,22 @@ export class Shape {
       pathLength: this.pathLength,
       isPointInside: this.isPointInside, // closure over pixel data, safe to share
       bounds: { ...this.bounds },
+      sourceVertices: this.sourceVertices ? this.sourceVertices.map(v => ({ x: v.x, y: v.y })) : null,
     });
     return cloned;
   }
 
   // Serialize to a JSON-safe plain object (no closures, no pixel data)
   toJSON() {
-    return {
+    const data = {
       points: this.points,
       tangents: this.tangents,
       normals: this.normals,
       pathLength: this.pathLength,
       bounds: this.bounds,
     };
+    if (this.sourceVertices) data.sourceVertices = this.sourceVertices;
+    return data;
   }
 
   // Reconstruct a Shape from serialized JSON data
@@ -164,6 +187,7 @@ export class Shape {
       pathLength: data.pathLength,
       isPointInside,
       bounds: { ...data.bounds },
+      sourceVertices: data.sourceVertices ? data.sourceVertices.map(v => ({ x: v.x, y: v.y })) : null,
     });
   }
 
@@ -233,6 +257,195 @@ export function createCircleShape(radius) {
     pathLength: 2 * Math.PI * radius,
     isPointInside,
     bounds: { minX: CX - radius, minY: CY - radius, maxX: CX + radius, maxY: CY + radius },
+  });
+}
+
+// [SHAPE-TOOLS] Create a rectangle shape
+export function createRectShape(width, height, cx, cy) {
+  width = width || DH * 0.3;
+  height = height || DH * 0.3;
+  cx = cx || CX;
+  cy = cy || CY;
+
+  const left = cx - width / 2;
+  const right = cx + width / 2;
+  const top = cy - height / 2;
+  const bottom = cy + height / 2;
+
+  const samplesPerSide = 100;
+  const points = [];
+  const tangents = [];
+  const normals = [];
+
+  // Top edge: left → right
+  for (let i = 0; i < samplesPerSide; i++) {
+    const t = i / samplesPerSide;
+    points.push({ x: left + t * width, y: top });
+    tangents.push({ x: 1, y: 0 });
+    normals.push({ x: 0, y: -1 });
+  }
+  // Right edge: top → bottom
+  for (let i = 0; i < samplesPerSide; i++) {
+    const t = i / samplesPerSide;
+    points.push({ x: right, y: top + t * height });
+    tangents.push({ x: 0, y: 1 });
+    normals.push({ x: 1, y: 0 });
+  }
+  // Bottom edge: right → left
+  for (let i = 0; i < samplesPerSide; i++) {
+    const t = i / samplesPerSide;
+    points.push({ x: right - t * width, y: bottom });
+    tangents.push({ x: -1, y: 0 });
+    normals.push({ x: 0, y: 1 });
+  }
+  // Left edge: bottom → top
+  for (let i = 0; i < samplesPerSide; i++) {
+    const t = i / samplesPerSide;
+    points.push({ x: left, y: bottom - t * height });
+    tangents.push({ x: 0, y: -1 });
+    normals.push({ x: -1, y: 0 });
+  }
+
+  const perimeter = 2 * (width + height);
+  const isPointInside = (x, y) => x >= left && x <= right && y >= top && y <= bottom;
+
+  return new Shape({
+    points,
+    tangents,
+    normals,
+    pathLength: perimeter,
+    isPointInside,
+    bounds: { minX: left, minY: top, maxX: right, maxY: bottom },
+    sourceVertices: [
+      { x: left, y: top }, { x: right, y: top },
+      { x: right, y: bottom }, { x: left, y: bottom },
+    ],
+  });
+}
+
+// [SHAPE-TOOLS] Create a regular polygon shape
+export function createRegularPolygon(sides, radius, cx, cy) {
+  sides = sides || 6;
+  radius = radius || DH * 0.18;
+  cx = cx || CX;
+  cy = cy || CY;
+
+  // Compute vertices
+  const vertices = [];
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2 - Math.PI / 2; // start from top
+    vertices.push({ x: cx + Math.cos(a) * radius, y: cy + Math.sin(a) * radius });
+  }
+
+  const samplesPerEdge = Math.max(30, Math.round(360 / sides));
+  const points = [];
+  const tangents = [];
+  const normals = [];
+
+  for (let i = 0; i < sides; i++) {
+    const v0 = vertices[i];
+    const v1 = vertices[(i + 1) % sides];
+    const edgeDx = v1.x - v0.x;
+    const edgeDy = v1.y - v0.y;
+    const edgeLen = Math.sqrt(edgeDx * edgeDx + edgeDy * edgeDy) || 1;
+    const tx = edgeDx / edgeLen;
+    const ty = edgeDy / edgeLen;
+    // Normal = perpendicular outward (right-hand rule for CW winding)
+    const nx = ty;
+    const ny = -tx;
+
+    for (let j = 0; j < samplesPerEdge; j++) {
+      const t = j / samplesPerEdge;
+      points.push({ x: v0.x + edgeDx * t, y: v0.y + edgeDy * t });
+      tangents.push({ x: tx, y: ty });
+      normals.push({ x: nx, y: ny });
+    }
+  }
+
+  // Compute bounds
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const v of vertices) {
+    if (v.x < minX) minX = v.x;
+    if (v.y < minY) minY = v.y;
+    if (v.x > maxX) maxX = v.x;
+    if (v.y > maxY) maxY = v.y;
+  }
+
+  // Perimeter
+  let perimeter = 0;
+  for (let i = 0; i < sides; i++) {
+    const v0 = vertices[i];
+    const v1 = vertices[(i + 1) % sides];
+    perimeter += Math.sqrt((v1.x - v0.x) ** 2 + (v1.y - v0.y) ** 2);
+  }
+
+  const isPointInside = raycastIsPointInside(points);
+
+  return new Shape({
+    points,
+    tangents,
+    normals,
+    pathLength: perimeter,
+    isPointInside,
+    bounds: { minX, minY, maxX, maxY },
+    sourceVertices: vertices.map(v => ({ x: v.x, y: v.y })),
+  });
+}
+
+// [SHAPE-TOOLS] Create a polygon shape from arbitrary points (pen tool)
+export function createPolygonFromPoints(penPoints) {
+  const n = penPoints.length;
+  if (n < 3) return null;
+
+  const samplesPerEdge = Math.max(20, Math.round(360 / n));
+  const points = [];
+  const tangents = [];
+  const normals = [];
+
+  for (let i = 0; i < n; i++) {
+    const v0 = penPoints[i];
+    const v1 = penPoints[(i + 1) % n];
+    const edgeDx = v1.x - v0.x;
+    const edgeDy = v1.y - v0.y;
+    const edgeLen = Math.sqrt(edgeDx * edgeDx + edgeDy * edgeDy) || 1;
+    const tx = edgeDx / edgeLen;
+    const ty = edgeDy / edgeLen;
+    const nx = ty;
+    const ny = -tx;
+
+    for (let j = 0; j < samplesPerEdge; j++) {
+      const t = j / samplesPerEdge;
+      points.push({ x: v0.x + edgeDx * t, y: v0.y + edgeDy * t });
+      tangents.push({ x: tx, y: ty });
+      normals.push({ x: nx, y: ny });
+    }
+  }
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of penPoints) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  let perimeter = 0;
+  for (let i = 0; i < n; i++) {
+    const v0 = penPoints[i];
+    const v1 = penPoints[(i + 1) % n];
+    perimeter += Math.sqrt((v1.x - v0.x) ** 2 + (v1.y - v0.y) ** 2);
+  }
+
+  const isPointInside = raycastIsPointInside(points);
+
+  return new Shape({
+    points,
+    tangents,
+    normals,
+    pathLength: perimeter,
+    isPointInside,
+    bounds: { minX, minY, maxX, maxY },
+    sourceVertices: penPoints.map(p => ({ x: p.x, y: p.y })),
   });
 }
 
@@ -393,6 +606,23 @@ export function parseSVG(svgString) {
     }
   }
 
+  // Extract anchor points from SVG path data for vertex editing
+  // Done before removing offSvg so we can use CTM for transforms
+  const svgVertices = [];
+  for (const pathEl of pathElements) {
+    const anchors = extractPathAnchors(pathEl);
+    const ctm = pathEl.getCTM();
+    for (const a of anchors) {
+      let px = a.x, py = a.y;
+      if (ctm) {
+        const tx = ctm.a * a.x + ctm.c * a.y + ctm.e;
+        const ty = ctm.b * a.x + ctm.d * a.y + ctm.f;
+        px = tx; py = ty;
+      }
+      svgVertices.push({ x: px * fitScale + offX, y: py * fitScale + offY });
+    }
+  }
+
   document.body.removeChild(offSvg);
 
   const scaledBounds = {
@@ -409,7 +639,62 @@ export function parseSVG(svgString) {
     pathLength: totalLength * fitScale,
     isPointInside,
     bounds: scaledBounds,
+    sourceVertices: svgVertices.length >= 3 ? svgVertices : null,
   });
+}
+
+// Extract anchor points (endpoints of path commands) from an SVG path element
+function extractPathAnchors(pathEl) {
+  const d = pathEl.getAttribute('d');
+  if (!d) return [];
+  const anchors = [];
+  let cx = 0, cy = 0; // current point
+  let sx = 0, sy = 0; // subpath start
+  // Tokenize: split into commands + numbers
+  const tokens = d.match(/[a-zA-Z]|[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g);
+  if (!tokens) return [];
+  let i = 0;
+  function num() { return parseFloat(tokens[i++]); }
+  while (i < tokens.length) {
+    const cmd = tokens[i];
+    if (/[a-zA-Z]/.test(cmd)) {
+      i++;
+      switch (cmd) {
+        case 'M': cx = num(); cy = num(); sx = cx; sy = cy; anchors.push({ x: cx, y: cy });
+          while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cx = num(); cy = num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'm': cx += num(); cy += num(); sx = cx; sy = cy; anchors.push({ x: cx, y: cy });
+          while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cx += num(); cy += num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'L': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cx = num(); cy = num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'l': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cx += num(); cy += num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'H': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cx = num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'h': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cx += num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'V': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cy = num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'v': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cy += num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'C': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { num(); num(); num(); num(); cx = num(); cy = num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'c': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { num(); num(); num(); num(); const dx = num(), dy = num(); cx += dx; cy += dy; anchors.push({ x: cx, y: cy }); } break;
+        case 'S': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { num(); num(); cx = num(); cy = num(); anchors.push({ x: cx, y: cy }); } break;
+        case 's': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { num(); num(); const dx = num(), dy = num(); cx += dx; cy += dy; anchors.push({ x: cx, y: cy }); } break;
+        case 'Q': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { num(); num(); cx = num(); cy = num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'q': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { num(); num(); const dx = num(), dy = num(); cx += dx; cy += dy; anchors.push({ x: cx, y: cy }); } break;
+        case 'T': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cx = num(); cy = num(); anchors.push({ x: cx, y: cy }); } break;
+        case 't': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { cx += num(); cy += num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'A': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { num(); num(); num(); num(); num(); cx = num(); cy = num(); anchors.push({ x: cx, y: cy }); } break;
+        case 'a': while (i < tokens.length && /^[+-.\d]/.test(tokens[i])) { num(); num(); num(); num(); num(); const adx = num(), ady = num(); cx += adx; cy += ady; anchors.push({ x: cx, y: cy }); } break;
+        case 'Z': case 'z': cx = sx; cy = sy; break;
+        default: break;
+      }
+    } else {
+      i++; // skip unexpected token
+    }
+  }
+  // Remove duplicate closing point (if last point equals first)
+  if (anchors.length >= 2) {
+    const first = anchors[0], last = anchors[anchors.length - 1];
+    if (Math.abs(first.x - last.x) < 0.01 && Math.abs(first.y - last.y) < 0.01) {
+      anchors.pop();
+    }
+  }
+  return anchors;
 }
 
 // Convert SVG shape elements to <path> elements
