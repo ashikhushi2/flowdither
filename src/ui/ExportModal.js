@@ -6,23 +6,26 @@ import { getAllAssets, getSelectedAssetId, getAssetById, getBgColor, saveCurrent
 import { exportProject, getActiveFile, renameFile } from '../core/FileManager.js';
 import { buildTabBar } from './TabBar.js';
 
+let _closeTimer = null;
+
 export function openExportModal(mode) {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
   if (mode === 'shape' && getSelectedAssetId() === null) return;
+  if (_closeTimer) { clearTimeout(_closeTimer); _closeTimer = null; }
   modal._exportMode = mode || 'canvas';
 
   // Pre-select format based on mode
   const formatSelect = document.getElementById('export-format');
+  const nameInput = document.getElementById('export-name');
   if (mode === 'project') {
     formatSelect.value = 'flowasset';
-    // Pre-fill with current file name
-    const nameInput = document.getElementById('export-name');
     const activeFile = getActiveFile();
     if (nameInput && activeFile) nameInput.value = activeFile.name;
-  } else if (formatSelect.value === 'flowasset') {
-    // Switch away from flowasset if opening canvas/shape export
-    formatSelect.value = 'png';
+  } else {
+    // Always switch away from flowasset for canvas/shape export
+    if (formatSelect.value === 'flowasset') formatSelect.value = 'png';
+    if (nameInput && !nameInput.value.trim()) nameInput.value = 'flow-dither';
   }
   formatSelect.dispatchEvent(new Event('change'));
 
@@ -41,20 +44,24 @@ export function initExportModal() {
   modal._exportMode = 'canvas';
 
   closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
-  modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+  modal.addEventListener('mousedown', e => { if (e.target === modal) modal.classList.add('hidden'); });
 
   const resGroup = document.getElementById('export-resolution').parentElement;
   const bgGroup = document.getElementById('export-bg').parentElement;
-  const nameGroup = document.getElementById('export-name-group');
+
+  const watermarkGroup = modal.querySelector('.export-watermark-group');
+  const gifOptions = modal.querySelector('.gif-options');
 
   function updateFormatVisibility() {
     const val = formatSelect.value;
     const isProject = val === 'flowasset';
     const isAnim = val !== 'png' && val !== 'flowasset';
+    const isGif = val === 'gif';
     animOptions.classList.toggle('hidden', !isAnim);
+    if (gifOptions) gifOptions.classList.toggle('hidden', !isGif);
     resGroup.classList.toggle('hidden', isProject);
     bgGroup.classList.toggle('hidden', isProject);
-    nameGroup.classList.toggle('hidden', !isProject);
+    if (watermarkGroup) watermarkGroup.classList.toggle('hidden', isProject);
     goBtn.textContent = isProject ? 'Save' : 'Export';
   }
 
@@ -66,6 +73,32 @@ export function initExportModal() {
   });
 
   goBtn.addEventListener('click', () => doExport(modal._exportMode));
+}
+
+// ── Watermark ────────────────────────────────────────────────────────────────
+
+function drawWatermark(ctx, w, h, bgHex) {
+  const text = 'DESIGN WITH AETHER';
+  const fontSize = Math.max(12, Math.round(h * 0.02));
+  const pad = fontSize * 0.8;
+
+  // Determine if background is light or dark
+  let isLight = false;
+  if (bgHex && bgHex !== 'transparent') {
+    const hex = bgHex.replace('#', '');
+    const r = parseInt(hex.slice(0, 2), 16) || 0;
+    const g = parseInt(hex.slice(2, 4), 16) || 0;
+    const b = parseInt(hex.slice(4, 6), 16) || 0;
+    isLight = (r * 0.299 + g * 0.587 + b * 0.114) > 128;
+  }
+
+  ctx.save();
+  ctx.font = `600 ${fontSize}px monospace`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)';
+  ctx.fillText(text, w - pad, h - pad * 0.7);
+  ctx.restore();
 }
 
 // ── Static (single-frame) render ─────────────────────────────────────────────
@@ -197,6 +230,7 @@ async function doExport(exportMode) {
   const duration = +document.getElementById('export-duration').value;
 
   const bg = bgSelect === 'custom' ? bgColorVal : (bgSelect === 'black' ? getBgColor() : bgSelect);
+  const watermark = document.getElementById('export-watermark').checked;
 
   const progress = document.getElementById('export-progress');
   const progressFill = progress.querySelector('.progress-fill');
@@ -206,11 +240,11 @@ async function doExport(exportMode) {
   progress.classList.remove('hidden');
   goBtn.disabled = true;
 
-  const prefix = exportMode === 'shape' ? 'flow-shape' : 'flow-dither';
+  const prefix = document.getElementById('export-name').value.trim() || 'flow-dither';
 
   try {
     if (format === 'flowasset') {
-      const projectName = document.getElementById('export-name').value.trim() || 'project';
+      const projectName = prefix;
       // Rename the active file to match the project name
       const activeFile = getActiveFile();
       if (activeFile && projectName !== activeFile.name) {
@@ -228,8 +262,9 @@ async function doExport(exportMode) {
       progressFill.style.width = '100%';
       progressText.textContent = '100%';
       // Close modal after save
-      setTimeout(() => {
+      _closeTimer = setTimeout(() => {
         document.getElementById('export-modal').classList.add('hidden');
+        _closeTimer = null;
       }, 500);
     } else if (format === 'png') {
       const canvas = document.createElement('canvas');
@@ -238,6 +273,7 @@ async function doExport(exportMode) {
       } else {
         renderAllAssetsStatic(canvas, resMult, bg);
       }
+      if (watermark) drawWatermark(canvas.getContext('2d'), canvas.width, canvas.height, bg);
       progressFill.style.width = '100%';
       progressText.textContent = '100%';
       downloadCanvas(canvas, `${prefix}.png`);
@@ -264,6 +300,7 @@ async function doExport(exportMode) {
       for (let i = 0; i < frameCount; i++) {
         const stepsThisFrame = Math.round(totalSimFrames / frameCount);
         advanceFn(ectx, ew, eh, bgHex, stretchPct, stepsThisFrame);
+        if (watermark) drawWatermark(ectx, ew, eh, bgHex);
         const pct = Math.round(((i + 1) / frameCount) * 100);
         progressFill.style.width = pct + '%';
         progressText.textContent = pct + '%';
@@ -271,7 +308,8 @@ async function doExport(exportMode) {
         await new Promise(r => setTimeout(r, 50));
       }
     } else if (format === 'gif') {
-      await exportGIF(resMult, bg, frameCount, duration, exportMode, prefix, (pct) => {
+      const gifQuality = document.getElementById('export-gif-quality').value;
+      await exportGIF(resMult, bg, frameCount, duration, exportMode, prefix, watermark, gifQuality, (pct) => {
         progressFill.style.width = pct + '%';
         progressText.textContent = pct + '%';
       });
@@ -295,7 +333,7 @@ function downloadCanvas(canvas, filename) {
   a.click();
 }
 
-async function exportGIF(resMult, bg, frameCount, duration, exportMode, prefix, onProgress) {
+async function exportGIF(resMult, bg, frameCount, duration, exportMode, prefix, watermark, gifQuality, onProgress) {
   const GIF = window.GIF || (await loadGifJs());
 
   if (!GIF) {
@@ -303,12 +341,34 @@ async function exportGIF(resMult, bg, frameCount, duration, exportMode, prefix, 
     return;
   }
 
+  // Quality presets: gif.js quality (1=best/slow, 30=worst/fast), scale factor
+  const qualityPresets = {
+    high:   { gifQ: 5,  scale: 1.0 },
+    medium: { gifQ: 15, scale: 0.5 },
+    low:    { gifQ: 25, scale: 0.35 },
+  };
+  const preset = qualityPresets[gifQuality] || qualityPresets.medium;
+
+  // Simulation canvas at full resolution
   const ew = DW * resMult;
   const eh = DH * resMult;
   const canvas = document.createElement('canvas');
   canvas.width = ew;
   canvas.height = eh;
   const ectx = canvas.getContext('2d');
+
+  // Output GIF dimensions (downscaled for medium/low)
+  const gifW = Math.round(ew * preset.scale);
+  const gifH = Math.round(eh * preset.scale);
+
+  // Downscale canvas (only needed if scale < 1)
+  let downCanvas, downCtx;
+  if (preset.scale < 1) {
+    downCanvas = document.createElement('canvas');
+    downCanvas.width = gifW;
+    downCanvas.height = gifH;
+    downCtx = downCanvas.getContext('2d');
+  }
 
   // Fill initial background
   const bgHex = (bg === 'transparent') ? '#000000' : (bg || getBgColor());
@@ -320,9 +380,9 @@ async function exportGIF(resMult, bg, frameCount, duration, exportMode, prefix, 
 
   const gif = new GIF({
     workers: 2,
-    quality: 10,
-    width: ew,
-    height: eh,
+    quality: preset.gifQ,
+    width: gifW,
+    height: gifH,
     workerScript: '/gif.worker.js',
   });
 
@@ -338,7 +398,15 @@ async function exportGIF(resMult, bg, frameCount, duration, exportMode, prefix, 
 
   for (let i = 0; i < frameCount; i++) {
     advanceFn(ectx, ew, eh, bgHex, stretchPct, stepsPerFrame);
-    gif.addFrame(canvas, { copy: true, delay });
+    if (watermark) drawWatermark(ectx, ew, eh, bgHex);
+
+    // Add frame — downscale if needed
+    if (downCtx) {
+      downCtx.drawImage(canvas, 0, 0, gifW, gifH);
+      gif.addFrame(downCanvas, { copy: true, delay });
+    } else {
+      gif.addFrame(canvas, { copy: true, delay });
+    }
     onProgress(Math.round(((i + 1) / frameCount) * 80));
   }
 

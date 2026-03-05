@@ -592,6 +592,12 @@ input[type=range]:active::-webkit-slider-thumb { background: #fff; }
   border-radius: 3px; cursor: pointer;
   margin-top: 6px;
 }
+.export-checkbox-label {
+  display: flex !important; align-items: center; gap: 8px; cursor: pointer;
+}
+.export-checkbox-label input[type=checkbox] {
+  width: 14px; height: 14px; accent-color: #888; cursor: pointer;
+}
 .anim-options { border-top: 1px solid #1a1a1a; padding-top: 14px; }
 #export-progress { margin: 12px 0; }
 .progress-bar {
