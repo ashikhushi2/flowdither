@@ -32,6 +32,7 @@ let speedMult = 1.0;
 let grainSpace = 9;
 let stretchPct = 0.45;
 let particleColor = '#ffffff';
+let opacity = 1.0;
 let flowCategory = 'spiral'; // 'spiral' or 'radial' — only one active at a time
 let spiralMode = 'edge';    // 'edge' = spiral toward boundary (default), 'center' = TODO
 let radialMode = 'edge';    // 'edge' = radial outward to boundary, 'center' = radial inward to center
@@ -49,7 +50,7 @@ let redoStack = [];
 export function getState() {
   return {
     nodes, activeId, dragState, flowMode, flowDir, linearAng,
-    fillDensity, speedMult, grainSpace, stretchPct, shapeRadius, particleColor, flowCategory, spiralMode, radialMode,
+    fillDensity, speedMult, grainSpace, stretchPct, shapeRadius, particleColor, opacity, flowCategory, spiralMode, radialMode,
     currentShape, currentSDF, paused,
     anchors, activeAnchorId, placingAnchorForNode,
   };
@@ -70,6 +71,7 @@ export function setSpeedMult(v) { speedMult = v; }
 export function setGrainSpace(v) { grainSpace = v; }
 export function setStretchPct(v) { stretchPct = v; }
 export function setParticleColor(v) { particleColor = v; }
+export function setOpacity(v) { opacity = v; }
 export function setFlowCategory(v) { flowCategory = v; }
 export function setSpiralMode(v) { spiralMode = v; }
 export function setRadialMode(v) { radialMode = v; }
@@ -365,6 +367,7 @@ export function saveNodeState() {
     grainSpace,
     stretchPct,
     particleColor,
+    opacity,
     flowCategory, spiralMode, radialMode,
     undoStack: JSON.parse(JSON.stringify(undoStack)),
     redoStack: JSON.parse(JSON.stringify(redoStack)),
@@ -383,6 +386,7 @@ export function restoreNodeState(snapshot) {
   grainSpace = snapshot.grainSpace != null ? snapshot.grainSpace : 9;
   stretchPct = snapshot.stretchPct != null ? snapshot.stretchPct : 0.45;
   particleColor = snapshot.particleColor || '#ffffff';
+  opacity = snapshot.opacity != null ? snapshot.opacity : 1.0;
   // Migrate old gravityMode → radialMode
   flowCategory = snapshot.flowCategory || 'spiral';
   spiralMode = snapshot.spiralMode || 'edge';

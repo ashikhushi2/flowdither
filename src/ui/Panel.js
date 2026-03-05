@@ -2,7 +2,7 @@ import { nodeColor, hexAlpha } from '../utils/color.js';
 import { normA, fmtAngle } from '../utils/math.js';
 import {
   getState, setActiveId, setFlowDir,
-  setFillDensity, setSpeedMult, setGrainSpace, setStretchPct, setParticleColor, setFlowCategory, setSpiralMode, setRadialMode,
+  setFillDensity, setSpeedMult, setGrainSpace, setStretchPct, setParticleColor, setOpacity, setFlowCategory, setSpiralMode, setRadialMode,
   addNodeAtBestGap, deleteNode, getNodeById,
   linkAnchorToNode, setPlacingAnchor, deleteAnchor, getAnchorById,
   setActiveAnchorId,
@@ -12,15 +12,17 @@ import { reinit as reinitParticles } from '../core/ParticleSystem.js';
 import {
   getSelectedAssetId, getAllAssets, getAssetById,
   removeAsset, selectAsset, deselectAll,
-  getBgColor, setBgColor, pushGlobalUndo,
+  getBgColor, setBgColor, pushGlobalUndo, reorderAsset,
 } from '../core/ShapeManager.js';
 
 // ── Shape creation callbacks ────────────────────────────────────────────────
 let _onCreatePrimitive = null;
 let _onActivatePenTool = null;
+let _onAlignShape = null;
 
 export function setOnCreatePrimitive(cb) { _onCreatePrimitive = cb; }
 export function setOnActivatePenTool(cb) { _onActivatePenTool = cb; }
+export function setOnAlignShape(cb) { _onAlignShape = cb; }
 
 // ── Popover state ───────────────────────────────────────────────────────────
 let openPopover = null;  // { type: 'node'|'anchor'|'shape', id: number }
@@ -76,6 +78,7 @@ function openShapePopover(asset, rowEl) {
   const speedVal = state.speedMult.toFixed(1);
   const grainVal = state.grainSpace;
   const trailPct = Math.round(state.stretchPct * 100);
+  const opacityPct = Math.round((state.opacity != null ? state.opacity : 1) * 100);
   const pColor = state.particleColor || '#ffffff';
 
   pop.innerHTML = `
@@ -127,6 +130,10 @@ function openShapePopover(asset, rowEl) {
       <div class="sr">
         <div class="sl"><span>Trail</span><span class="sv" id="pop-trail-val">${trailPct}%</span></div>
         <input type="range" id="pop-trail-sl" min="10" max="85" value="${trailPct}" step="1">
+      </div>
+      <div class="sr">
+        <div class="sl"><span>Opacity</span><span class="sv" id="pop-opacity-val">${opacityPct}%</span></div>
+        <input type="range" id="pop-opacity-sl" min="1" max="100" value="${opacityPct}" step="1">
       </div>
 
       <div class="pop-group-label">Colour</div>
@@ -254,6 +261,13 @@ function bindShapePopoverEvents(pop, asset) {
   trailSl.addEventListener('input', () => {
     setStretchPct(+trailSl.value / 100);
     pop.querySelector('#pop-trail-val').textContent = trailSl.value + '%';
+  });
+
+  // Opacity
+  const opacitySl = pop.querySelector('#pop-opacity-sl');
+  opacitySl.addEventListener('input', () => {
+    setOpacity(+opacitySl.value / 100);
+    pop.querySelector('#pop-opacity-val').textContent = opacitySl.value + '%';
   });
 
   // Particle color
@@ -586,23 +600,85 @@ function buildShapeRows() {
   const assets = getAllAssets();
   const selId = getSelectedAssetId();
 
+  let draggedAssetId = null;
+
   for (const asset of assets) {
     const isSelected = asset.id === selId;
     const row = document.createElement('div');
     row.className = 'item-row' + (isSelected ? ' active' : '');
     row.dataset.shapeId = asset.id;
+    row.draggable = true;
 
     const isOpen = openPopover?.type === 'shape' && openPopover.id === asset.id;
 
+    const isVisible = asset.visible !== false;
     row.innerHTML = `
       <div class="ndot" style="background:#aaa;box-shadow:0 0 6px #aaa55"></div>
       <span class="item-label">${escapeHtml(asset.name)}</span>
+      <button class="item-vis${isVisible ? '' : ' off'}" data-shape-id="${asset.id}" title="${isVisible ? 'Hide' : 'Show'} layer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          ${isVisible
+            ? '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'
+            : '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>'}
+        </svg>
+      </button>
       <button class="item-edit${isOpen ? ' open' : ''}" data-shape-id="${asset.id}" title="Edit properties">${EDIT_ICON}</button>
       <button class="ndel" data-shape-id="${asset.id}">&times;</button>
     `;
 
+    // ── Drag-to-reorder handlers ──
+    row.addEventListener('dragstart', (e) => {
+      draggedAssetId = asset.id;
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (draggedAssetId === null || draggedAssetId === asset.id) return;
+      e.dataTransfer.dropEffect = 'move';
+      const rect = row.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const above = e.clientY < midY;
+      row.classList.toggle('drag-over-above', above);
+      row.classList.toggle('drag-over-below', !above);
+    });
+
+    row.addEventListener('dragleave', () => {
+      row.classList.remove('drag-over-above', 'drag-over-below');
+    });
+
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      row.classList.remove('drag-over-above', 'drag-over-below');
+      if (draggedAssetId === null || draggedAssetId === asset.id) return;
+      const rect = row.getBoundingClientRect();
+      const above = e.clientY < rect.top + rect.height / 2;
+      // Compute target index in the assets array
+      const allAssets = getAllAssets();
+      let targetIdx = allAssets.findIndex(a => a.id === asset.id);
+      if (!above) targetIdx++;
+      // Adjust if dragged item was before the target
+      const fromIdx = allAssets.findIndex(a => a.id === draggedAssetId);
+      if (fromIdx < targetIdx) targetIdx--;
+      pushGlobalUndo();
+      reorderAsset(draggedAssetId, targetIdx);
+      draggedAssetId = null;
+      buildPanel();
+      renderOverlay();
+    });
+
+    row.addEventListener('dragend', () => {
+      row.classList.remove('dragging');
+      draggedAssetId = null;
+      shapesList.querySelectorAll('.item-row').forEach(r => {
+        r.classList.remove('drag-over-above', 'drag-over-below');
+      });
+    });
+
     row.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.item-edit') || e.target.closest('.ndel')) return;
+      if (e.target.closest('.item-edit') || e.target.closest('.ndel') || e.target.closest('.item-vis')) return;
+      if (asset.visible === false) return;
       if (!isSelected) {
         selectAsset(asset.id);
         if (window._syncAfterShapeSelect) window._syncAfterShapeSelect();
@@ -611,8 +687,21 @@ function buildShapeRows() {
       }
     });
 
+    row.querySelector('.item-vis').addEventListener('click', (e) => {
+      e.stopPropagation();
+      pushGlobalUndo();
+      asset.visible = !asset.visible;
+      // If hiding the currently selected shape, deselect it
+      if (!asset.visible && getSelectedAssetId() === asset.id) {
+        deselectAll();
+      }
+      buildPanel();
+      renderOverlay();
+    });
+
     row.querySelector('.item-edit').addEventListener('click', (e) => {
       e.stopPropagation();
+      if (asset.visible === false) return;
       if (!isSelected) {
         selectAsset(asset.id);
         if (window._syncAfterShapeSelect) window._syncAfterShapeSelect();
@@ -654,10 +743,17 @@ export function buildPanel() {
     el.style.display = hasSelection ? '' : 'none';
   });
 
-  // Toggle shape-selected-controls
+  // Toggle shape-selected-controls and position section
   const shapeControls = document.querySelector('.shape-selected-controls');
   if (shapeControls) {
     shapeControls.style.display = hasSelection ? '' : 'none';
+  }
+
+  const hasAnchorSelection = activeAnchorId !== null;
+  const positionEnabled = hasSelection || hasAnchorSelection;
+  const alignContainer = document.getElementById('align-row-container');
+  if (alignContainer) {
+    alignContainer.classList.toggle('disabled-section', !positionEnabled);
   }
 
   // Update export dropdown disabled state
@@ -783,6 +879,21 @@ export function buildPanel() {
 }
 
 export function initGlobalControls() {
+  // ── Global alignment buttons ──────────────────────────────────────────
+  document.querySelectorAll('#global-align-row .align-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      const st = getState();
+      pushGlobalUndo();
+      if (st.activeAnchorId !== null) {
+        if (_onAlignShape) _onAlignShape(st.activeAnchorId, b.dataset.align, 'anchor');
+      } else {
+        const selId = getSelectedAssetId();
+        if (!selId) return;
+        if (_onAlignShape) _onAlignShape(selId, b.dataset.align, 'shape');
+      }
+    });
+  });
+
   // [SHAPE-TOOLS] Add shape button → show creation popover
   const addShapeBtn = document.getElementById('add-shape-btn');
   if (addShapeBtn) {

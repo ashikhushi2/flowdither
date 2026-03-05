@@ -13,11 +13,11 @@ import {
   addNode, deleteActiveNode,
   addNodeAtBestGap, selectNodeByIndex, togglePaused,
   setShape, clearShape, setActiveAnchorId, getPlacingAnchor, setPlacingAnchor, clearPlacingAnchor,
-  addAnchor, linkAnchorToNode, deleteAnchor,
+  addAnchor, linkAnchorToNode, deleteAnchor, getAnchorById,
   translateAnchors, rotateNodes, rotateAnchors, scaleAnchors,
   saveNodeStateWithShape, restoreNodeStateWithShape, restoreNodeState,
 } from './nodes/NodeManager.js';
-import { buildPanel, initGlobalControls, setOnCreatePrimitive, setOnActivatePenTool } from './ui/Panel.js';
+import { buildPanel, initGlobalControls, setOnCreatePrimitive, setOnActivatePenTool, setOnAlignShape } from './ui/Panel.js';
 import { initUploadHandler, setOnShapeChange } from './ui/UploadHandler.js';
 import { createCircleShape, createRectShape, createRegularPolygon, createPolygonFromPoints } from './core/ShapeParser.js';
 import { initExportModal, openExportModal } from './ui/ExportModal.js';
@@ -199,6 +199,79 @@ setOnCreatePrimitive((type, sides) => {
   syncGlobalSlidersFromState();
   buildPanel();
   renderOverlay();
+});
+
+// ── Shape/anchor movement helpers ────────────────────────────────────────────
+
+function moveSelectedShape(dx, dy) {
+  const selId = getSelectedAssetId();
+  if (!selId) return;
+  if (getSelectedAssetId() !== selId) selectAsset(selId);
+
+  const s = getState();
+  if (!s.currentShape) return;
+  s.currentShape.translate(dx, dy);
+  const newSdf = new DistanceField(s.currentShape);
+  newSdf.compute();
+  setShape(s.currentShape, newSdf);
+  translateParticles(dx, dy, s.currentShape, newSdf);
+
+  const { dctx } = getCanvasRefs();
+  const imgData = dctx.getImageData(0, 0, W, H);
+  dctx.fillStyle = getBgColor();
+  dctx.fillRect(0, 0, W, H);
+  dctx.putImageData(imgData, dx * (W / DW), dy * (H / DH));
+  renderOverlay();
+}
+
+function moveSelectedAnchor(dx, dy) {
+  const st = getState();
+  if (st.activeAnchorId === null) return;
+  const a = getAnchorById(st.activeAnchorId);
+  if (!a) return;
+  a.x += dx;
+  a.y += dy;
+  renderOverlay();
+}
+
+// ── Shape alignment callback ─────────────────────────────────────────────────
+setOnAlignShape((targetId, direction, targetType) => {
+  if (targetType === 'anchor') {
+    const a = getAnchorById(targetId);
+    if (!a) return;
+    let dx = 0, dy = 0;
+    switch (direction) {
+      case 'left':     dx = -a.x; break;
+      case 'right':    dx = DW - a.x; break;
+      case 'center-h': dx = DW / 2 - a.x; break;
+      case 'top':      dy = -a.y; break;
+      case 'bottom':   dy = DH - a.y; break;
+      case 'center-v': dy = DH / 2 - a.y; break;
+    }
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+    a.x += dx;
+    a.y += dy;
+    renderOverlay();
+    return;
+  }
+
+  const asset = getAssetById(targetId);
+  if (!asset || !asset.shape) return;
+
+  const b = asset.shape.bounds;
+  let dx = 0, dy = 0;
+
+  switch (direction) {
+    case 'left':     dx = -b.minX; break;
+    case 'right':    dx = DW - b.maxX; break;
+    case 'center-h': dx = (DW - (b.minX + b.maxX)) / 2; break;
+    case 'top':      dy = -b.minY; break;
+    case 'bottom':   dy = DH - b.maxY; break;
+    case 'center-v': dy = (DH - (b.minY + b.maxY)) / 2; break;
+  }
+
+  if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+  moveSelectedShape(dx, dy);
 });
 
 // [SHAPE-TOOLS] — Pen tool state
@@ -624,39 +697,39 @@ oc.addEventListener('mousedown', e => {
     return;
   }
 
-  // [SHAPE-TOOLS] Vertex handle hit test (before bbox — more specific)
+  // [SHAPE-TOOLS] Vertex handle & bbox handle hit tests
+  // Only active at the shape level — skip when a node or anchor is selected
   if (!penToolActive && getSelectedAssetId() !== null) {
-    const st = getState();
-    if (st.currentShape?.sourceVertices) {
-      const verts = st.currentShape.sourceVertices;
-      for (let i = 0; i < verts.length; i++) {
-        const v = verts[i];
-        const dx = pos.x - v.x, dy = pos.y - v.y;
-        if (dx * dx + dy * dy < 64) { // 8px threshold
-          pushGlobalUndo();
-          vertexDrag = {
-            vertexIndex: i,
-            previewVertices: verts.map(p => ({ x: p.x, y: p.y })),
-          };
-          return;
+    const _st = getState();
+    if (_st.activeId === null && _st.activeAnchorId === null) {
+      // Vertex handle hit test (before bbox — more specific)
+      if (_st.currentShape?.sourceVertices) {
+        const verts = _st.currentShape.sourceVertices;
+        for (let i = 0; i < verts.length; i++) {
+          const v = verts[i];
+          const dx = pos.x - v.x, dy = pos.y - v.y;
+          if (dx * dx + dy * dy < 64) { // 8px threshold
+            pushGlobalUndo();
+            vertexDrag = {
+              vertexIndex: i,
+              previewVertices: verts.map(p => ({ x: p.x, y: p.y })),
+            };
+            return;
+          }
         }
       }
-    }
-  }
-
-  // [SHAPE-TOOLS] Bbox handle hit test
-  if (!penToolActive && getSelectedAssetId() !== null) {
-    const st = getState();
-    if (st.currentShape) {
-      const b = st.currentShape.bounds;
-      const handles = getBboxHandlePositions(b);
-      for (let i = 0; i < handles.length; i++) {
-        const h = handles[i];
-        const dx = pos.x - h.x, dy = pos.y - h.y;
-        if (dx * dx + dy * dy < 100) { // 10px threshold
-          pushGlobalUndo();
-          bboxDrag = { handleIndex: i, startBounds: { ...b }, startPos: { x: pos.x, y: pos.y } };
-          return;
+      // Bbox handle hit test
+      if (_st.currentShape) {
+        const b = _st.currentShape.bounds;
+        const handles = getBboxHandlePositions(b);
+        for (let i = 0; i < handles.length; i++) {
+          const h = handles[i];
+          const dx = pos.x - h.x, dy = pos.y - h.y;
+          if (dx * dx + dy * dy < 100) { // 10px threshold
+            pushGlobalUndo();
+            bboxDrag = { handleIndex: i, startBounds: { ...b }, startPos: { x: pos.x, y: pos.y } };
+            return;
+          }
         }
       }
     }
@@ -749,6 +822,7 @@ oc.addEventListener('mousedown', e => {
   // Check if click is inside any other shape → select it (or Option+click to duplicate)
   for (const asset of getAllAssets()) {
     if (asset.id === selId) continue;
+    if (asset.visible === false) continue;
     if (asset.particles.sdf && asset.particles.sdf.sample(pos.x, pos.y) < 0) {
       if (e.altKey) {
         // Option+Drag on non-selected shape: select it, duplicate, and drag the copy
@@ -885,10 +959,11 @@ oc.addEventListener('mousemove', e => {
   }
 
   // Dynamic cursors when hovering vertex handles or bbox handles
+  // Only show transform cursors at the shape level — not when a node/anchor is active
   const selId = getSelectedAssetId();
   if (selId !== null && !shapeDrag) {
     const st = getState();
-    if (st.currentShape && !penToolActive) {
+    if (st.currentShape && !penToolActive && st.activeId === null && st.activeAnchorId === null) {
       let foundCursor = false;
       // Vertex handles first (higher priority)
       if (st.currentShape.sourceVertices) {
@@ -918,6 +993,8 @@ oc.addEventListener('mousemove', e => {
         }
       }
       if (!foundCursor) oc.style.cursor = '';
+    } else {
+      oc.style.cursor = '';
     }
   }
 
@@ -1258,6 +1335,23 @@ document.addEventListener('keydown', e => {
       buildPanel();
       renderOverlay();
     }
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    let dx = 0, dy = 0;
+    if (e.key === 'ArrowLeft')  dx = -step;
+    if (e.key === 'ArrowRight') dx = step;
+    if (e.key === 'ArrowUp')    dy = -step;
+    if (e.key === 'ArrowDown')  dy = step;
+
+    const st = getState();
+    if (st.activeAnchorId !== null) {
+      pushGlobalUndo();
+      moveSelectedAnchor(dx, dy);
+    } else if (getSelectedAssetId() !== null) {
+      pushGlobalUndo();
+      moveSelectedShape(dx, dy);
+    }
   } else if (e.key === ' ') {
     e.preventDefault();
     const p = togglePaused();
@@ -1355,7 +1449,7 @@ function frame(ts) {
       saveToSnapshot(asset.particles);
       asset.nodeState = saveNodeStateWithShape();
 
-      renderAssetParticles(dctx, W, H);
+      if (asset.visible !== false) renderAssetParticles(dctx, W, H);
     }
 
     // Restore selected asset state back into globals for UI/overlay

@@ -596,11 +596,12 @@ function drawParticles(ctx, w, h) {
 
   const state = getState();
   const { r, g, b: bl } = parseHexColor(state.particleColor || '#ffffff');
+  const shapeOpacity = state.opacity != null ? state.opacity : 1;
 
   for (let b = 0; b < NUM_BUCKETS; b++) {
     const particles = buckets[b];
     if (particles.length === 0) continue;
-    const a = (b + 0.5) / NUM_BUCKETS;
+    const a = (b + 0.5) / NUM_BUCKETS * shapeOpacity;
     ctx.fillStyle = `rgba(${r},${g},${bl},${a.toFixed(3)})`;
     for (let j = 0; j < particles.length; j++) {
       const idx = particles[j];

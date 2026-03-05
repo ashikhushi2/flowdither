@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FLOW DITHER</title>
+  <title>AETHER</title>
+  <link rel="icon" type="image/svg+xml" href="/src/assets/favicon.svg">
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
@@ -15,7 +16,7 @@
 
   <div id="panel">
     <div id="panel-header">
-      <img src="/src/assets/flow-logo.svg" alt="Flow Dither" class="panel-logo">
+      <img src="/src/assets/flow-logo.svg" alt="Aether" class="panel-logo">
     </div>
 
     <div id="panel-scroll">
@@ -53,7 +54,45 @@
         </div>
         <div class="section-body">
           <div id="shapes-list"></div>
+        </div>
+      </div>
+      <div class="panel-divider shape-section"></div>
+
+      <!-- ── Section: Position ───────────────────────────────────── -->
+      <div class="panel-section" id="position-section">
+        <div class="section-header">
+          <span class="section-title">Position</span>
+        </div>
+        <div class="section-body">
+          <div id="align-row-container" class="disabled-section">
+            <div class="pop-group-label">Alignment</div>
+            <div class="align-row" id="global-align-row">
+              <div class="align-group">
+                <button class="align-btn" data-align="left" title="Align left">
+                  <svg width="14" height="14" viewBox="0 0 14 14"><rect x="1" y="1" width="2" height="12" fill="currentColor"/><rect x="5" y="3" width="7" height="3" fill="currentColor"/><rect x="5" y="8" width="5" height="3" fill="currentColor"/></svg>
+                </button>
+                <button class="align-btn" data-align="center-h" title="Center horizontally">
+                  <svg width="14" height="14" viewBox="0 0 14 14"><rect x="6" y="1" width="2" height="12" fill="currentColor"/><rect x="2" y="3" width="10" height="3" fill="currentColor"/><rect x="3" y="8" width="8" height="3" fill="currentColor"/></svg>
+                </button>
+                <button class="align-btn" data-align="right" title="Align right">
+                  <svg width="14" height="14" viewBox="0 0 14 14"><rect x="11" y="1" width="2" height="12" fill="currentColor"/><rect x="2" y="3" width="7" height="3" fill="currentColor"/><rect x="4" y="8" width="5" height="3" fill="currentColor"/></svg>
+                </button>
+              </div>
+              <div class="align-group">
+                <button class="align-btn" data-align="top" title="Align top">
+                  <svg width="14" height="14" viewBox="0 0 14 14"><rect x="1" y="1" width="12" height="2" fill="currentColor"/><rect x="3" y="5" width="3" height="7" fill="currentColor"/><rect x="8" y="5" width="3" height="5" fill="currentColor"/></svg>
+                </button>
+                <button class="align-btn" data-align="center-v" title="Center vertically">
+                  <svg width="14" height="14" viewBox="0 0 14 14"><rect x="1" y="6" width="12" height="2" fill="currentColor"/><rect x="3" y="2" width="3" height="10" fill="currentColor"/><rect x="8" y="3" width="3" height="8" fill="currentColor"/></svg>
+                </button>
+                <button class="align-btn" data-align="bottom" title="Align bottom">
+                  <svg width="14" height="14" viewBox="0 0 14 14"><rect x="1" y="11" width="12" height="2" fill="currentColor"/><rect x="3" y="2" width="3" height="7" fill="currentColor"/><rect x="8" y="3" width="3" height="5" fill="currentColor"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
           <div class="shape-selected-controls" style="display:none">
+            <div class="pop-group-label">Transform</div>
             <div class="gr">
               <span>X</span>
               <input id="pos-x-sl" type="range" min="-300" max="300" value="0" step="1">
@@ -85,7 +124,9 @@
           <span class="section-title">Nodes</span>
           <button id="add-btn" class="section-add-btn">+</button>
         </div>
-        <div class="section-body" id="nodes-list"></div>
+        <div class="section-body">
+          <div id="nodes-list"></div>
+        </div>
       </div>
       <div class="panel-divider"></div>
 
@@ -95,13 +136,18 @@
           <span class="section-title">Anchors</span>
           <button id="add-anchor-btn" class="section-add-btn">+</button>
         </div>
-        <div class="section-body" id="anchors-list"></div>
+        <div class="section-body">
+          <div id="anchors-list"></div>
+        </div>
       </div>
       <div class="panel-divider"></div>
 
       <!-- ── Section 6: Export ─────────────────────────────────── -->
       <div class="panel-section">
-        <div class="section-body" style="padding-top:14px">
+        <div class="section-header">
+          <span class="section-title">Export</span>
+        </div>
+        <div class="section-body">
           <div class="export-btn-wrap">
             <div id="export-dropdown" class="export-dropdown" style="display:none">
               <div class="export-dropdown-item" data-mode="canvas">Export Canvas</div>

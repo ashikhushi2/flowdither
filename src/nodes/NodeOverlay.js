@@ -21,6 +21,76 @@ function drawShapeOutline(octx, shape, strokeStyle, lineWidth) {
   octx.stroke();
 }
 
+function _drawAnchors(octx, state, nodes) {
+  const { anchors, activeAnchorId } = state;
+
+  // Dashed lines from linked nodes to their anchors
+  octx.setLineDash([4, 4]);
+  nodes.forEach((n, idx) => {
+    if (!n.linkedAnchors || n.linkedAnchors.length === 0) return;
+    const np = nPos(n);
+    const col = nodeColor(idx);
+    for (const aid of n.linkedAnchors) {
+      const a = getAnchorById(aid);
+      if (!a) continue;
+      octx.beginPath();
+      octx.moveTo(np.x * S, np.y * S);
+      octx.lineTo(a.x * S, a.y * S);
+      octx.strokeStyle = hexAlpha(col, 0.2);
+      octx.lineWidth = 1;
+      octx.stroke();
+    }
+  });
+  octx.setLineDash([]);
+
+  for (const a of anchors) {
+    const ax = a.x * S, ay = a.y * S;
+    const isActive = a.id === activeAnchorId;
+    const alpha = isActive ? 1.0 : 0.6;
+
+    // Dashed radius circle
+    octx.beginPath();
+    octx.arc(ax, ay, a.radius * S, 0, Math.PI * 2);
+    octx.setLineDash([6, 4]);
+    octx.strokeStyle = `rgba(255,170,0,${isActive ? 0.2 : 0.1})`;
+    octx.lineWidth = 1;
+    octx.stroke();
+    octx.setLineDash([]);
+
+    // Active glow
+    if (isActive) {
+      const g = octx.createRadialGradient(ax, ay, 0, ax, ay, 30);
+      g.addColorStop(0, 'rgba(255,170,0,0.25)');
+      g.addColorStop(1, 'rgba(255,170,0,0)');
+      octx.fillStyle = g;
+      octx.beginPath();
+      octx.arc(ax, ay, 30, 0, Math.PI * 2);
+      octx.fill();
+    }
+
+    // Diamond marker
+    const ds = isActive ? 8 : 6;
+    octx.beginPath();
+    octx.moveTo(ax, ay - ds);
+    octx.lineTo(ax + ds, ay);
+    octx.lineTo(ax, ay + ds);
+    octx.lineTo(ax - ds, ay);
+    octx.closePath();
+    octx.fillStyle = `rgba(255,170,0,${alpha})`;
+    octx.fill();
+    octx.strokeStyle = 'rgba(0,0,0,0.5)';
+    octx.lineWidth = 1.5;
+    octx.stroke();
+
+    // Name label
+    octx.font = `bold ${isActive ? 9 : 8}px 'SF Mono', monospace`;
+    octx.fillStyle = `rgba(255,170,0,${isActive ? 0.9 : 0.5})`;
+    octx.textAlign = 'center';
+    octx.textBaseline = 'top';
+    octx.fillText(a.name, ax, ay + ds + 4);
+  }
+}
+
 export function renderOverlay(shapeTransform) {
   const { octx } = getCanvasRefs();
   const state = getState();
@@ -104,8 +174,11 @@ export function renderOverlay(shapeTransform) {
     }
   }
 
-  // Only draw nodes/anchors/flow indicator for selected asset
-  // When pen tool is active, skip heavy node/anchor rendering entirely
+  // ── Draw anchors (always visible, regardless of selection) ──────────────
+  _drawAnchors(octx, state, nodes);
+
+  // Only draw nodes/flow indicator for selected asset
+  // When pen tool is active, skip heavy node rendering entirely
   const penState = getPenToolState();
   if (selId === null || penState.active) {
     if (hasTransform) octx.restore();
@@ -271,74 +344,7 @@ export function renderOverlay(shapeTransform) {
     octx.fillText(idx + 1, lx, ly);
   });
 
-  // ── Draw anchors ──────────────────────────────────────────────────────────
-  const { anchors, activeAnchorId } = state;
-
-  // Dashed lines from linked nodes to their anchors
-  octx.setLineDash([4, 4]);
-  nodes.forEach((n, idx) => {
-    if (!n.linkedAnchors || n.linkedAnchors.length === 0) return;
-    const np = nPos(n);
-    const col = nodeColor(idx);
-    for (const aid of n.linkedAnchors) {
-      const a = getAnchorById(aid);
-      if (!a) continue;
-      octx.beginPath();
-      octx.moveTo(np.x * S, np.y * S);
-      octx.lineTo(a.x * S, a.y * S);
-      octx.strokeStyle = hexAlpha(col, 0.2);
-      octx.lineWidth = 1;
-      octx.stroke();
-    }
-  });
-  octx.setLineDash([]);
-
-  for (const a of anchors) {
-    const ax = a.x * S, ay = a.y * S;
-    const isActive = a.id === activeAnchorId;
-    const alpha = isActive ? 1.0 : 0.6;
-
-    // Dashed radius circle
-    octx.beginPath();
-    octx.arc(ax, ay, a.radius * S, 0, Math.PI * 2);
-    octx.setLineDash([6, 4]);
-    octx.strokeStyle = `rgba(255,170,0,${isActive ? 0.2 : 0.1})`;
-    octx.lineWidth = 1;
-    octx.stroke();
-    octx.setLineDash([]);
-
-    // Active glow
-    if (isActive) {
-      const g = octx.createRadialGradient(ax, ay, 0, ax, ay, 30);
-      g.addColorStop(0, 'rgba(255,170,0,0.25)');
-      g.addColorStop(1, 'rgba(255,170,0,0)');
-      octx.fillStyle = g;
-      octx.beginPath();
-      octx.arc(ax, ay, 30, 0, Math.PI * 2);
-      octx.fill();
-    }
-
-    // Diamond marker
-    const ds = isActive ? 8 : 6;
-    octx.beginPath();
-    octx.moveTo(ax, ay - ds);
-    octx.lineTo(ax + ds, ay);
-    octx.lineTo(ax, ay + ds);
-    octx.lineTo(ax - ds, ay);
-    octx.closePath();
-    octx.fillStyle = `rgba(255,170,0,${alpha})`;
-    octx.fill();
-    octx.strokeStyle = 'rgba(0,0,0,0.5)';
-    octx.lineWidth = 1.5;
-    octx.stroke();
-
-    // Name label
-    octx.font = `bold ${isActive ? 9 : 8}px 'SF Mono', monospace`;
-    octx.fillStyle = `rgba(255,170,0,${isActive ? 0.9 : 0.5})`;
-    octx.textAlign = 'center';
-    octx.textBaseline = 'top';
-    octx.fillText(a.name, ax, ay + ds + 4);
-  }
+  // (anchors drawn earlier via _drawAnchors)
 
   // Restore after shape transform
   if (hasTransform) {

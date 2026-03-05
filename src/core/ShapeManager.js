@@ -23,6 +23,7 @@ export function addAsset(shape, sdf, name) {
     nodeState: null,  // will be populated on first save or by caller
     particles,
     flowMode: 'edge', // [CENTER-MODE] 'edge' (default) or 'center'
+    visible: true,
   };
   assets.push(asset);
   return asset;
@@ -115,6 +116,7 @@ export function saveAllState() {
         sdf: clonedSdf,
         nodeState: clonedNodeState,
         flowMode: a.flowMode || 'edge', // [CENTER-MODE]
+        visible: a.visible !== false,
         particles: {
           px: a.particles.px.slice(),
           py: a.particles.py.slice(),
@@ -155,6 +157,7 @@ export function restoreAllState(snapshot) {
     sdf: a.sdf,
     nodeState: a.nodeState,
     flowMode: a.flowMode || 'edge', // [CENTER-MODE]
+    visible: a.visible !== false,
     particles: {
       px: new Float32Array(a.particles.px),
       py: new Float32Array(a.particles.py),
@@ -182,6 +185,13 @@ export function restoreAllState(snapshot) {
   nextAssetId = snapshot.nextAssetId;
   bgColor = snapshot.bgColor || '#000000';
   if (snapshot.anchorState) restoreAnchorState(snapshot.anchorState);
+}
+
+export function reorderAsset(fromId, toIndex) {
+  const fromIdx = assets.findIndex(a => a.id === fromId);
+  if (fromIdx < 0 || fromIdx === toIndex) return;
+  const [asset] = assets.splice(fromIdx, 1);
+  assets.splice(toIndex, 0, asset);
 }
 
 export function getMaxPerAsset() { return MAX_PER_ASSET; }
@@ -247,6 +257,7 @@ export function duplicateAsset(id, dx = 20, dy = 20) {
     nodeState: clonedNodeState,
     particles: clonedParticles,
     flowMode: src.flowMode || 'edge', // [CENTER-MODE]
+    visible: src.visible !== false,
   };
   assets.push(newAsset);
   return newAsset;
@@ -297,6 +308,7 @@ export function serializeState() {
         nodeState: ns,
         particles: sp,
         flowMode: a.flowMode || 'edge', // [CENTER-MODE]
+        visible: a.visible !== false,
       };
     }),
     selectedAssetId,
@@ -341,7 +353,7 @@ export function deserializeState(data) {
     for (const k of UINT8_FIELDS) particles[k] = new Uint8Array(sp[k] || maxCount);
     for (const k of INT16_FIELDS) particles[k] = new Int16Array(sp[k] || maxCount);
 
-    return { id: a.id, name: a.name, shape, sdf, nodeState, particles, flowMode: a.flowMode || 'edge' };
+    return { id: a.id, name: a.name, shape, sdf, nodeState, particles, flowMode: a.flowMode || 'edge', visible: a.visible !== false };
   });
 
   selectedAssetId = data.selectedAssetId;

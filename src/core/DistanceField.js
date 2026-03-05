@@ -110,29 +110,14 @@ export class DistanceField {
     // Result is in src
     this.nearestIdx = src;
 
-    // ── 3. Pre-compute inside/outside bitmap via scanline ray-casting ──
-    // Much faster than per-pixel raycast: O(H * N) instead of O(W * H * N)
+    // ── 3. Pre-compute inside/outside bitmap using Shape's own isPointInside ──
+    // This ensures consistency with particle spawning and handles complex SVGs
+    // (multi-subpath shapes, concave outlines) correctly.
     const insideBits = new Uint8Array(size);
-    const pts = shape.points;
-    const n = pts.length;
     for (let y = 0; y < h; y++) {
-      // Collect all edge crossings for this scanline
-      const crossings = [];
-      for (let i = 0, j = n - 1; i < n; j = i++) {
-        const yi = pts[i].y, yj = pts[j].y;
-        if ((yi > y) !== (yj > y)) {
-          const xCross = (pts[j].x - pts[i].x) * (y - yi) / (yj - yi) + pts[i].x;
-          crossings.push(xCross);
-        }
-      }
-      crossings.sort((a, b) => a - b);
-      // Fill between pairs of crossings (even-odd rule)
-      for (let c = 0; c < crossings.length - 1; c += 2) {
-        const x0 = Math.max(0, Math.ceil(crossings[c]));
-        const x1 = Math.min(w - 1, Math.floor(crossings[c + 1]));
-        const rowBase = y * w;
-        for (let x = x0; x <= x1; x++) {
-          insideBits[rowBase + x] = 1;
+      for (let x = 0; x < w; x++) {
+        if (shape.isPointInside(x, y)) {
+          insideBits[y * w + x] = 1;
         }
       }
     }
