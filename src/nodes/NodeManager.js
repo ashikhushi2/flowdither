@@ -40,6 +40,9 @@ let radialMode = 'edge';    // 'edge' = radial outward to boundary, 'center' = r
 let shapeRadius = 108; // fixed default (600 * 0.18), doesn't change on resize
 let currentShape = null; // Shape object when using SVG
 let currentSDF = null;   // DistanceField when using SVG
+let centerOffsetX = 0;
+let centerOffsetY = 0;
+
 let paused = false;
 
 // Undo/redo
@@ -53,6 +56,7 @@ export function getState() {
     fillDensity, speedMult, grainSpace, stretchPct, shapeRadius, particleColor, opacity, flowCategory, spiralMode, radialMode,
     currentShape, currentSDF, paused,
     anchors, activeAnchorId, placingAnchorForNode,
+    centerOffsetX, centerOffsetY,
   };
 }
 
@@ -76,6 +80,8 @@ export function setFlowCategory(v) { flowCategory = v; }
 export function setSpiralMode(v) { spiralMode = v; }
 export function setRadialMode(v) { radialMode = v; }
 export function setPaused(v) { paused = v; }
+export function setCenterOffsetX(v) { centerOffsetX = v; }
+export function setCenterOffsetY(v) { centerOffsetY = v; }
 export function setShapeRadius(r) { shapeRadius = r; }
 export function togglePaused() { paused = !paused; return paused; }
 
@@ -369,6 +375,7 @@ export function saveNodeState() {
     particleColor,
     opacity,
     flowCategory, spiralMode, radialMode,
+    centerOffsetX, centerOffsetY,
     undoStack: JSON.parse(JSON.stringify(undoStack)),
     redoStack: JSON.parse(JSON.stringify(redoStack)),
   };
@@ -391,6 +398,8 @@ export function restoreNodeState(snapshot) {
   flowCategory = snapshot.flowCategory || 'spiral';
   spiralMode = snapshot.spiralMode || 'edge';
   radialMode = snapshot.radialMode || snapshot.gravityMode || 'edge';
+  centerOffsetX = snapshot.centerOffsetX || 0;
+  centerOffsetY = snapshot.centerOffsetY || 0;
   undoStack = snapshot.undoStack || [];
   redoStack = snapshot.redoStack || [];
   placingAnchorForNode = null;

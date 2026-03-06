@@ -16,6 +16,7 @@ import {
   addAnchor, linkAnchorToNode, deleteAnchor, getAnchorById,
   translateAnchors, rotateNodes, rotateAnchors, scaleAnchors,
   saveNodeStateWithShape, restoreNodeStateWithShape, restoreNodeState,
+  setCenterOffsetX, setCenterOffsetY,
 } from './nodes/NodeManager.js';
 import { buildPanel, initGlobalControls, setOnCreatePrimitive, setOnActivatePenTool, setOnAlignShape } from './ui/Panel.js';
 import { initUploadHandler, setOnShapeChange } from './ui/UploadHandler.js';
@@ -676,6 +677,7 @@ function getBboxAnchorY(hi, b) {
 
 // ── Drag handling ────────────────────────────────────────────────────────────
 let shapeDrag = null;
+let centerDrag = null;
 const oc = document.getElementById('overlay-canvas');
 
 oc.addEventListener('mousedown', e => {
@@ -731,6 +733,22 @@ oc.addEventListener('mousedown', e => {
             return;
           }
         }
+      }
+    }
+  }
+
+  // Center marker hit test — before node/anchor tests
+  if (getSelectedAssetId() !== null) {
+    const _cs = getState();
+    if (_cs.currentShape) {
+      const cb = _cs.currentShape.bounds;
+      const cmx = (cb.minX + cb.maxX) / 2 + (_cs.centerOffsetX || 0);
+      const cmy = (cb.minY + cb.maxY) / 2 + (_cs.centerOffsetY || 0);
+      const cdx = pos.x - cmx, cdy = pos.y - cmy;
+      if (cdx * cdx + cdy * cdy < 100) { // 10px threshold
+        pushGlobalUndo();
+        centerDrag = { startX: pos.x, startY: pos.y, startOX: _cs.centerOffsetX || 0, startOY: _cs.centerOffsetY || 0 };
+        return;
       }
     }
   }
@@ -998,6 +1016,20 @@ oc.addEventListener('mousemove', e => {
     }
   }
 
+  if (centerDrag) {
+    const newOX = centerDrag.startOX + (pos.x - centerDrag.startX);
+    const newOY = centerDrag.startOY + (pos.y - centerDrag.startY);
+    setCenterOffsetX(newOX);
+    setCenterOffsetY(newOY);
+    // Sync popover sliders if open
+    const cxSl = document.getElementById('pop-cx-sl');
+    const cySl = document.getElementById('pop-cy-sl');
+    if (cxSl) { cxSl.value = Math.round(newOX); document.getElementById('pop-cx-val').textContent = Math.round(newOX); }
+    if (cySl) { cySl.value = Math.round(newOY); document.getElementById('pop-cy-val').textContent = Math.round(newOY); }
+    renderOverlay();
+    return;
+  }
+
   if (shapeDrag) {
     shapeDrag.dx = pos.x - shapeDrag.startX;
     shapeDrag.dy = pos.y - shapeDrag.startY;
@@ -1102,6 +1134,12 @@ oc.addEventListener('mouseup', () => {
     return;
   }
 
+  if (centerDrag) {
+    centerDrag = null;
+    renderOverlay();
+    return;
+  }
+
   if (shapeDrag) {
     const { dx, dy } = shapeDrag;
     shapeDrag = null;
@@ -1134,6 +1172,7 @@ oc.addEventListener('mouseup', () => {
 oc.addEventListener('mouseleave', () => {
   if (vertexDrag) { vertexDrag = null; if (vertexOverlayRAF) { cancelAnimationFrame(vertexOverlayRAF); vertexOverlayRAF = 0; } renderOverlay(); return; }
   if (bboxDrag) { bboxDrag = null; renderOverlay(); return; }
+  if (centerDrag) { centerDrag = null; renderOverlay(); return; }
   if (shapeDrag) {
     shapeDrag = null;
     renderOverlay();
@@ -1420,8 +1459,14 @@ function frame(ts) {
     const dt = Math.min((ts - last) / 1000, 0.05);
     const { dctx } = getCanvasRefs();
 
-    // Clear canvas once with trail effect using bg color
-    clearFrame(dctx, W, H, getBgColor(), state.stretchPct);
+    // Use max stretchPct across all assets so each shape's trail is respected
+    let maxStretch = state.stretchPct;
+    for (const a of getAllAssets()) {
+      if (a.nodeState && a.nodeState.stretchPct != null && a.nodeState.stretchPct > maxStretch) {
+        maxStretch = a.nodeState.stretchPct;
+      }
+    }
+    clearFrame(dctx, W, H, getBgColor(), maxStretch);
 
     // Save current selected asset state before iterating
     const selId = getSelectedAssetId();

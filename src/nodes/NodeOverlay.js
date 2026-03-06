@@ -344,6 +344,31 @@ export function renderOverlay(shapeTransform) {
     octx.fillText(idx + 1, lx, ly);
   });
 
+  // ── Center marker (crosshair) ──────────────────────────────────────────
+  if (currentShape) {
+    const b = currentShape.bounds;
+    const cmx = ((b.minX + b.maxX) / 2 + (state.centerOffsetX || 0)) * S;
+    const cmy = ((b.minY + b.maxY) / 2 + (state.centerOffsetY || 0)) * S;
+    const cs = 8; // crosshair arm length
+
+    // Crosshair +
+    octx.beginPath();
+    octx.moveTo(cmx - cs, cmy);
+    octx.lineTo(cmx + cs, cmy);
+    octx.moveTo(cmx, cmy - cs);
+    octx.lineTo(cmx, cmy + cs);
+    octx.strokeStyle = '#00cccc';
+    octx.lineWidth = 1.5;
+    octx.stroke();
+
+    // Circle around crosshair
+    octx.beginPath();
+    octx.arc(cmx, cmy, 5, 0, Math.PI * 2);
+    octx.strokeStyle = '#00cccc';
+    octx.lineWidth = 1.5;
+    octx.stroke();
+  }
+
   // (anchors drawn earlier via _drawAnchors)
 
   // Restore after shape transform

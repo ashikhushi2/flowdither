@@ -5,7 +5,7 @@ import {
   setFillDensity, setSpeedMult, setGrainSpace, setStretchPct, setParticleColor, setOpacity, setFlowCategory, setSpiralMode, setRadialMode,
   addNodeAtBestGap, deleteNode, getNodeById,
   linkAnchorToNode, setPlacingAnchor, deleteAnchor, getAnchorById,
-  setActiveAnchorId,
+  setActiveAnchorId, setCenterOffsetX, setCenterOffsetY,
 } from '../nodes/NodeManager.js';
 import { renderOverlay } from '../nodes/NodeOverlay.js';
 import { reinit as reinitParticles } from '../core/ParticleSystem.js';
@@ -113,6 +113,17 @@ function openShapePopover(asset, rowEl) {
           <button class="grav-btn radial-btn${fCat === 'radial' && rMode === 'center' ? ' active' : ''}" data-radial="center" ${fCat !== 'radial' ? 'disabled' : ''}>Center</button>
         </div>
       </div>
+
+      <div class="pop-group-label">Center Offset</div>
+      <div class="sr">
+        <div class="sl"><span>Center X</span><span class="sv" id="pop-cx-val">${state.centerOffsetX || 0}</span></div>
+        <input type="range" id="pop-cx-sl" min="-300" max="300" value="${state.centerOffsetX || 0}">
+      </div>
+      <div class="sr">
+        <div class="sl"><span>Center Y</span><span class="sv" id="pop-cy-val">${state.centerOffsetY || 0}</span></div>
+        <input type="range" id="pop-cy-sl" min="-300" max="300" value="${state.centerOffsetY || 0}">
+      </div>
+      <button class="dir-btn" id="pop-center-reset" style="width:100%;margin-bottom:4px">Reset Center</button>
 
       <div class="pop-group-label">Flow</div>
       <div class="sr">
@@ -231,6 +242,34 @@ function bindShapePopoverEvents(pop, asset) {
       pop.querySelectorAll('.radial-btn').forEach(x => x.classList.toggle('active', x === b));
       reinitParticles();
     });
+  });
+
+  // Center X
+  const cxSl = pop.querySelector('#pop-cx-sl');
+  cxSl.addEventListener('input', () => {
+    setCenterOffsetX(+cxSl.value);
+    pop.querySelector('#pop-cx-val').textContent = cxSl.value;
+    renderOverlay();
+  });
+
+  // Center Y
+  const cySl = pop.querySelector('#pop-cy-sl');
+  cySl.addEventListener('input', () => {
+    setCenterOffsetY(+cySl.value);
+    pop.querySelector('#pop-cy-val').textContent = cySl.value;
+    renderOverlay();
+  });
+
+  // Reset center
+  pop.querySelector('#pop-center-reset').addEventListener('click', () => {
+    pushGlobalUndo();
+    setCenterOffsetX(0);
+    setCenterOffsetY(0);
+    cxSl.value = 0;
+    cySl.value = 0;
+    pop.querySelector('#pop-cx-val').textContent = '0';
+    pop.querySelector('#pop-cy-val').textContent = '0';
+    renderOverlay();
   });
 
   // Fill

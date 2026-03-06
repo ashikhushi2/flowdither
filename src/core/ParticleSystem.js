@@ -148,8 +148,8 @@ export function update(dt) {
   let shapeCX = 0, shapeCY = 0, shapeR = 1;
   if (currentShape) {
     const b = currentShape.bounds;
-    shapeCX = (b.minX + b.maxX) / 2;
-    shapeCY = (b.minY + b.maxY) / 2;
+    shapeCX = (b.minX + b.maxX) / 2 + (state.centerOffsetX || 0);
+    shapeCY = (b.minY + b.maxY) / 2 + (state.centerOffsetY || 0);
     shapeR = Math.max((b.maxX - b.minX), (b.maxY - b.minY)) / 2 || 1;
   }
   const grainAmp = Math.max(0.1, 20 - grainSpace) * 0.15;
@@ -353,6 +353,25 @@ export function update(dt) {
       const gStrength = gravityK * Math.min(dist * 0.05, 1.0);
       vx += gx * gStrength;
       vy += gy * gStrength;
+
+      // Center offset bias — shift spiral focus toward offset center
+      if (state.centerOffsetX || state.centerOffsetY) {
+        const toCX = shapeCX - x, toCY = shapeCY - y;
+        const cDist = Math.sqrt(toCX * toCX + toCY * toCY) || 1;
+        // Orbit around offset center: tangential component (perpendicular to radial)
+        const radX = toCX / cDist, radY = toCY / cDist;
+        const orbX = -radY * flowDir, orbY = radX * flowDir;
+        // Offset magnitude drives blend strength
+        const offMag = Math.sqrt(state.centerOffsetX * state.centerOffsetX + state.centerOffsetY * state.centerOffsetY);
+        const blend = Math.min(offMag / 150, 0.7); // ramps up to 0.7 at 150px offset
+        // Blend: replace some boundary-tangent flow with orbit around offset center
+        vx = vx * (1 - blend) + orbX * baseSpeed * blend;
+        vy = vy * (1 - blend) + orbY * baseSpeed * blend;
+        // Radial pull toward offset center (maintains spiral structure)
+        const pullStrength = gravityK * blend * Math.min(dist * 0.05, 1.0);
+        vx += radX * pullStrength * cDist * 0.02;
+        vy += radY * pullStrength * cDist * 0.02;
+      }
     }
 
     // 4. Flow stream node influence
@@ -532,10 +551,10 @@ export function renderAssetParticles(ctx, w, h) {
 }
 
 function parseHexColor(hex) {
-  const r = parseInt(hex.slice(1, 3), 16) || 255;
-  const g = parseInt(hex.slice(3, 5), 16) || 255;
-  const b = parseInt(hex.slice(5, 7), 16) || 255;
-  return { r, g, b };
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return { r: isNaN(r) ? 255 : r, g: isNaN(g) ? 255 : g, b: isNaN(b) ? 255 : b };
 }
 
 function drawParticles(ctx, w, h) {
@@ -554,8 +573,8 @@ function drawParticles(ctx, w, h) {
   let dShapeCX = 0, dShapeCY = 0, dShapeR = 1;
   if (shape) {
     const sb = shape.bounds;
-    dShapeCX = (sb.minX + sb.maxX) / 2;
-    dShapeCY = (sb.minY + sb.maxY) / 2;
+    dShapeCX = (sb.minX + sb.maxX) / 2 + (drawState.centerOffsetX || 0);
+    dShapeCY = (sb.minY + sb.maxY) / 2 + (drawState.centerOffsetY || 0);
     dShapeR = Math.max(sb.maxX - sb.minX, sb.maxY - sb.minY) / 2 || 1;
   }
 
